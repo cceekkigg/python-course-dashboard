@@ -23,7 +23,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin, students }) => {
     // Simulate network delay
     setTimeout(() => {
       // Admin Login
-      if (email === 'admin' && (password === 'admin' || password === 'any')) {
+      if (email === 'admin' && password === 'ada999') {
         const adminUser = {
           id: 'admin',
           name: 'Course Instructor',
@@ -67,7 +67,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin, students }) => {
             <Terminal className="h-7 w-7 text-blue-600" />
           </div>
           <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">
-            PyMastery
+            PyStarter
           </h2>
           <p className="mt-2 text-sm text-slate-600">
             Intro to Python Programming
@@ -112,13 +112,14 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin, students }) => {
         
         {/* No more cheat sheet */}
         <div className="mt-4 text-center">
-           <p className="text-xs text-slate-400">Default password for new students is <code className="bg-slate-100 px-1 py-0.5 rounded">123456</code></p>
+           {/*<p className="text-xs text-slate-400">Default password for new students is <code className="bg-slate-100 px-1 py-0.5 rounded">123456</code></p>*/}
+           <p className="text-xs text-slate-400">Initial password for enrolled students is their full email address; please change it after your first login.</p>
         </div>
 
       </div>
       
       <p className="mt-8 text-center text-xs text-slate-500">
-        &copy; 2025-2026 PyMastery Education.
+        &copy; 2025-2026 PyStarter · Contact: jdr_maggiea@hotmail.com
       </p>
     </div>
   );
