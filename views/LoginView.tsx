@@ -118,7 +118,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin, students }) => {
       </div>
       
       <p className="mt-8 text-center text-xs text-slate-500">
-        &copy; 2024 PyMastery Education.
+        &copy; 2025-2026 PyMastery Education.
       </p>
     </div>
   );
