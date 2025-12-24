@@ -1,0 +1,5 @@
+{
+  "name": "Python Course Dashboard",
+  "description": "A streamlined, React-based course dashboard MVP designed for VPS testing. Features a secure-feeling login interface and a responsive student welcome dashboard with course progress visualization.",
+  "requestFramePermissions": []
+}
