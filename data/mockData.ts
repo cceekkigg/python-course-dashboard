@@ -31,45 +31,261 @@ export const INITIAL_ANNOUNCEMENTS: Announcement[] = [
 ];
 
 // Mock Database of Students
-// Initialized with 0 attendance, empty scores, and default password '123456'
 export const MOCK_STUDENTS: StudentRecord[] = [
   {
-    id: "1",
-    name: "Alex Johnson",
-    email: "alex@student.com",
+    id: "0",
+    name: "demo",
+    email: "demo@student.com",
     role: "student",
-    password: "123456",
-    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Alex",
+    password: "demo",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=demo",
     attendance: 0,
     assignmentScores: {},
-    profession: "Data Analyst",
-    notes: "Needs help with loops."
+    profession: "",
+    notes: "Country: Demo"
+  },
+  {
+    id: "1",
+    name: "Bassant Mansour",
+    email: "basantmansour@aucegypt.edu",
+    role: "student",
+    password: "basantmansour@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Bassant&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
   },
   {
     id: "2",
-    name: "Sarah Connor",
-    email: "sarah@student.com",
+    name: "Xena Hassan",
+    email: "xenaragy@gmail.com",
     role: "student",
-    password: "123456",
-    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah",
+    password: "xenaragy@gmail.com",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Xena&mouth=smile&eyebrows=defaultNatural",
     attendance: 0,
     assignmentScores: {},
-    profession: "Web Developer",
-    notes: "Excellent performance."
+    profession: "",
+    notes: "Country: Egypt"
   },
   {
     id: "3",
-    name: "John Doe",
-    email: "john@student.com",
+    name: "Abdelrahman Amer",
+    email: "abdelrahmanamer@aucegypt.edu",
     role: "student",
-    password: "123456",
-    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=John",
+    password: "abdelrahmanamer@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Abdelrahman&mouth=smile&eyebrows=defaultNatural",
     attendance: 0,
     assignmentScores: {},
-    profession: "Student",
-    notes: "Often late."
-  }
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "4",
+    name: "Rahaf Nour",
+    email: "rahafnour@aucegypt.edu",
+    role: "student",
+    password: "rahafnour@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Rahaf&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "5",
+    name: "Ayad Gomaa",
+    email: "ayadgomaa@aucegypt.edu",
+    role: "student",
+    password: "ayadgomaa@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Ayad&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+    {
+    id: "6",
+    name: "Nadine Elgarem",
+    email: "nadineelgarem@aucegypt.edu",
+    role: "student",
+    password: "nadineelgarem@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Nadine&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "7",
+    name: "Ahmed Kamal",
+    email: "ahmedkamall@aucegypt.edu",
+    role: "student",
+    password: "ahmedkamall@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Ahmed&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "8",
+    name: "Ahmad ElKattan",
+    email: "ahmadelkattan@aucegypt.edu",
+    role: "student",
+    password: "ahmadelkattan@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Ahmad&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "9",
+    name: "Mariham Takla",
+    email: "marihamfarouk@aucegypt.edu",
+    role: "student",
+    password: "marihamfarouk@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Mariham&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "10",
+    name: "Menan Elhennawy",
+    email: "menanelhennawy@aucegypt.edu",
+    role: "student",
+    password: "menanelhennawy@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Menan&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "11",
+    name: "George Botros",
+    email: "georgerafik234@gmail.com",
+    role: "student",
+    password: "georgerafik234@gmail.com",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Abdelrahman&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "12",
+    name: "Manuel Echave",
+    email: "echave.manuel@hotmail.com",
+    role: "student",
+    password: "echave.manuel@hotmail.com",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Manuel&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Netherlands"
+  },
+  {
+    id: "13",
+    name: "Marim Lashin",
+    email: "mariam.lashin@aucegypt.edu",
+    role: "student",
+    password: "mariam.lashin@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=mariam&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "14",
+    name: "Osama barghash",
+    email: "ossamahesham@aucegypt.edu",
+    role: "student",
+    password: "ossamahesham@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Osama&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "15",
+    name: "Fares Eltanbouly",
+    email: "faresmahmoud@aucegypt.edu",
+    role: "student",
+    password: "faresmahmoud@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Fares&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "16",
+    name: "Lana Beshir",
+    email: "lanabeshir@aucegypt.edu",
+    role: "student",
+    password: "lanabeshir@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Lana&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "17",
+    name: "Anna Waldeck",
+    email: "a.c.waldeck@tilburguniversity.edu",
+    role: "student",
+    password: "a.c.waldeck@tilburguniversity.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Anna&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Netherlands"
+  },
+  {
+    id: "18",
+    name: "Aliaa Hussein",
+    email: "aliaahussein@aucegypt.edu",
+    role: "student",
+    password: "aliaahussein@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Aliaa&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "19",
+    name: "Steven Youssef",
+    email: "stevenyoussef@aucegypt.edu",
+    role: "student",
+    password: "stevenyoussef@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Steven&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
+  {
+    id: "20",
+    name: "Karen Kamal",
+    email: "kkamal05@aucegypt.edu",
+    role: "student",
+    password: "kkamal05@aucegypt.edu",
+    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Karen&mouth=smile&eyebrows=defaultNatural",
+    attendance: 0,
+    assignmentScores: {},
+    profession: "",
+    notes: "Country: Egypt"
+  },
 ];
+
 
 // Course Structure (Weeks > Days > Materials)
 export const COURSE_WEEKS: CourseWeek[] = [
