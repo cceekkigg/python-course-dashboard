@@ -1,4 +1,4 @@
-export type Role = 'student' | 'admin';
+export type Role = 'student' | 'admin' | 'guest';
 
 export interface User {
   id: string;
@@ -79,6 +79,15 @@ export interface Announcement {
   message: string;
   date: string;
   author: string;
+  is_active?: boolean;
+}
+
+export interface AccessLog {
+  id: string;
+  user_name: string;
+  role: string;
+  ip_address: string;
+  login_time: string;
 }
 
 export enum DashboardViewType {

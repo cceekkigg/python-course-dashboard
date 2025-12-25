@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
-import { ASSIGNMENTS_DB } from '../../data/mockData';
-import { StudentRecord, Assignment, Announcement } from '../../types';
+import React, { useState, useEffect } from 'react';
+import { StudentRecord, Announcement, AccessLog } from '../../types';
 import Button from '../../components/Button';
 import Input from '../../components/Input';
-import { Search, Edit2, Save, X, User as UserIcon, BookOpen, Key, Bell, Trash2, Server, Database, Code, Shield, FileText as FileIcon, HelpCircle, Terminal } from 'lucide-react';
+import { Search, Edit2, Save, Trash2, Users, Bell, Activity, Globe, X, RefreshCw } from 'lucide-react';
+import { supabase } from '../../data/supabaseClient';
 
 interface AdminPanelProps {
   announcements: Announcement[];
@@ -14,511 +14,396 @@ interface AdminPanelProps {
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ 
-  announcements, 
-  onAddAnnouncement, 
-  onDeleteAnnouncement,
-  students,
-  onUpdateStudents
+  students, 
+  onUpdateStudents,
+  announcements // Passed from parent (all announcements)
 }) => {
+  const [activeTab, setActiveTab] = useState<'users' | 'announcements' | 'scores' | 'visitors'>('users');
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'students' | 'announcements' | 'specs' | 'dbguide'>('students');
   
-  // Editing State
-  const [editingStudent, setEditingStudent] = useState<StudentRecord | null>(null);
+  // Local states
+  const [logs, setLogs] = useState<AccessLog[]>([]);
+  const [dbAnnouncements, setDbAnnouncements] = useState<Announcement[]>([]);
+
+  // Editing State (For User Management Modal)
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<StudentRecord | null>(null);
 
-  // New Announcement State
-  const [newAnnTitle, setNewAnnTitle] = useState('');
-  const [newAnnMsg, setNewAnnMsg] = useState('');
+  // --- FETCH HELPERS ---
+  const fetchLogs = async () => {
+    const { data } = await supabase.from('access_logs').select('*').order('login_time', { ascending: false });
+    if (data) setLogs(data as AccessLog[]);
+  };
 
-  // Collect all homework assignments for the gradebook columns
-  const allHomeworks: Assignment[] = Object.values(ASSIGNMENTS_DB)
-    .flat()
-    .filter(a => a.type === 'homework');
+  const fetchAnnouncements = async () => {
+    // If announcements are passed from parent, we use those, but we can also re-fetch if needed for specific admin actions
+    // For now, we rely on parent or local state management for the list
+    setDbAnnouncements(announcements); 
+  };
 
+  useEffect(() => {
+    if (activeTab === 'visitors') fetchLogs();
+    if (activeTab === 'announcements') setDbAnnouncements(announcements);
+  }, [activeTab, announcements]);
+
+  // --- 1. USER MANAGEMENT HANDLERS (MODAL) ---
   const handleEditClick = (student: StudentRecord) => {
-    setEditingStudent({ ...student }); // Clone to avoid direct mutation
+    setEditingStudent({ ...student });
     setIsModalOpen(true);
   };
 
-  const handleModalSave = () => {
+  const handleModalSave = async () => {
     if (!editingStudent) return;
     
-    // Update via parent prop to ensure persistence
-    const updatedStudents = students.map(s => s.id === editingStudent.id ? editingStudent : s);
-    onUpdateStudents(updatedStudents);
+    // 1. Update Parent State (Optimistic)
+    const updatedList = students.map(s => s.id === editingStudent.id ? editingStudent : s);
+    onUpdateStudents(updatedList);
+
+    // 2. Save to Supabase
+    await supabase.from('users').update({
+        name: editingStudent.name,
+        email: editingStudent.email,
+        role: editingStudent.role,
+        password: editingStudent.password,
+        profession: editingStudent.profession,
+        notes: editingStudent.notes
+    }).eq('id', editingStudent.id);
 
     setIsModalOpen(false);
     setEditingStudent(null);
   };
 
-  const handleScoreChange = (assignId: string, scoreStr: string) => {
-    if (!editingStudent) return;
-    const score = parseInt(scoreStr) || 0;
-    setEditingStudent({
-      ...editingStudent,
-      assignmentScores: {
-        ...editingStudent.assignmentScores,
-        [assignId]: score
-      }
-    });
-  };
+  // --- 2. ANNOUNCEMENT HANDLERS ---
+  const [newAnnTitle, setNewAnnTitle] = useState('');
+  const [newAnnMsg, setNewAnnMsg] = useState('');
 
-  const handlePostAnnouncement = (e: React.FormEvent) => {
+  const createAnnouncement = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAnnTitle || !newAnnMsg) return;
+    const { data } = await supabase.from('announcements').insert({
+        title: newAnnTitle,
+        message: newAnnMsg,
+        is_active: true
+    }).select().single();
 
-    const newAnn: Announcement = {
-      id: Date.now().toString(),
-      title: newAnnTitle,
-      message: newAnnMsg,
-      date: new Date().toLocaleDateString(),
-      author: 'Admin'
-    };
-
-    onAddAnnouncement(newAnn);
-    setNewAnnTitle('');
-    setNewAnnMsg('');
+    if (data) {
+        // In a real app we'd call a parent handler or refresh. 
+        // For MVP we just assume parent refreshes on next mount or we force it:
+        window.location.reload(); // Simple refresh to show new data
+    }
   };
 
-  const filteredStudents = students.filter(s => 
-    s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    s.email.toLowerCase().includes(searchTerm.toLowerCase())
+  const toggleAnnouncement = async (id: string, currentState: boolean) => {
+    await supabase.from('announcements').update({ is_active: !currentState }).eq('id', id);
+    window.location.reload(); 
+  };
+
+  // --- 3. SCORES HANDLERS (INLINE TABLE) ---
+  const handleScoreUpdate = async (studentId: string, field: string, value: any) => {
+     const student = students.find(s => s.id === studentId);
+     if (!student) return;
+
+     let updatedStudent = { ...student };
+     let dbUpdate = {};
+
+     if (field === 'attendance') {
+        const count = parseInt(value) || 0;
+        updatedStudent.attendance = count; // Store count locally
+        dbUpdate = { attendance: count };
+     } else {
+        // It's an assignment (hw-X or final-project)
+        const newScores = { ...student.assignmentScores, [field]: parseInt(value) || 0 };
+        updatedStudent.assignmentScores = newScores;
+        dbUpdate = { assignment_scores: newScores };
+     }
+     
+     // Update UI
+     const updatedList = students.map(s => s.id === studentId ? updatedStudent : s);
+     onUpdateStudents(updatedList);
+
+     // Update DB
+     await supabase.from('users').update(dbUpdate).eq('id', studentId);
+  };
+
+  // Filter helper
+  const filteredUsers = students.filter(s => 
+    (s.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+    (s.email || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  // Helper arrays for Gradebook Columns
+  const homeworkIds = Array.from({length: 10}, (_, i) => `hw-${i+1}`);
 
   return (
     <div className="space-y-6">
       <header className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Admin Dashboard</h1>
-          <p className="text-slate-600">Manage student access, grading, and records.</p>
-        </div>
-        <div className="flex gap-4">
-           {activeTab === 'students' && (
-             <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+        <h1 className="text-2xl font-bold text-slate-900">Admin Control Center</h1>
+        {activeTab !== 'visitors' && (
+            <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <input 
-                  type="text" 
-                  placeholder="Search students..." 
-                  className="pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 w-64"
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
+                  type="text" placeholder="Search..." 
+                  className="pl-9 pr-4 py-2 border rounded-lg text-sm w-64"
+                  value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
                 />
-             </div>
-           )}
-        </div>
+            </div>
+        )}
       </header>
 
       {/* Tabs */}
-      <div className="flex space-x-2 border-b border-slate-200 overflow-x-auto">
-        <button 
-          onClick={() => setActiveTab('students')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-            activeTab === 'students' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          Student Management
-        </button>
-        <button 
-          onClick={() => setActiveTab('announcements')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-            activeTab === 'announcements' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          Announcements
-        </button>
-        <button 
-          onClick={() => setActiveTab('specs')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-            activeTab === 'specs' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          System Architecture
-        </button>
-        <button 
-          onClick={() => setActiveTab('dbguide')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-            activeTab === 'dbguide' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          Database Guide
-        </button>
+      <div className="flex gap-2 border-b overflow-x-auto">
+        {[
+            { id: 'users', icon: Users, label: 'User Management' },
+            { id: 'scores', icon: Activity, label: 'Status & Scores' },
+            { id: 'announcements', icon: Bell, label: 'Announcements' },
+            { id: 'visitors', icon: Globe, label: 'Visitor Logs' },
+        ].map(tab => (
+            <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`flex items-center px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                    activeTab === tab.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+            >
+                <tab.icon className="w-4 h-4 mr-2" /> {tab.label}
+            </button>
+        ))}
       </div>
 
-      {activeTab === 'students' ? (
-        /* Student Table */
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Student</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Attendance</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Profession</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-slate-200">
-              {filteredStudents.map((student) => (
-                <tr key={student.id} className="hover:bg-slate-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                     <div className="flex items-center">
-                        <div className="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center mr-3 text-xs font-bold text-slate-600">
-                          {student.name.charAt(0)}
-                        </div>
-                        <div>
-                          <div className="text-sm font-medium text-slate-900">{student.name}</div>
-                          <div className="text-xs text-slate-500">{student.email}</div>
-                        </div>
-                     </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                        student.attendance >= 90 ? 'bg-green-100 text-green-800' : 
-                        student.attendance >= 75 ? 'bg-yellow-100 text-yellow-800' : 
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {student.attendance}%
-                      </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                    {student.profession || '-'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                     <Button size="sm" variant="outline" onClick={() => handleEditClick(student)}>
-                       <Edit2 className="w-3 h-3 mr-1" /> Edit
-                     </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : activeTab === 'announcements' ? (
-        /* Announcement Manager */
-        <div className="grid md:grid-cols-3 gap-6">
-           {/* Create New */}
-           <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm h-fit">
-              <h3 className="font-bold text-slate-900 mb-4 flex items-center">
-                <Bell className="w-4 h-4 mr-2" /> Make New Announcement
-              </h3>
-              <form onSubmit={handlePostAnnouncement} className="space-y-4">
-                <Input 
-                  label="Title" 
-                  placeholder="e.g. Class Cancelled" 
-                  value={newAnnTitle}
-                  onChange={e => setNewAnnTitle(e.target.value)}
-                  required
-                />
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Message</label>
-                  <textarea 
-                    className="w-full rounded-lg border border-slate-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
-                    rows={4}
-                    placeholder="Enter your message here..."
-                    value={newAnnMsg}
-                    onChange={e => setNewAnnMsg(e.target.value)}
-                    required
-                  />
-                </div>
-                <Button type="submit" fullWidth>Post Announcement</Button>
-              </form>
-           </div>
-
-           {/* List */}
-           <div className="md:col-span-2 space-y-4">
-              <h3 className="font-bold text-slate-900">Active Announcements</h3>
-              {announcements.length === 0 && <p className="text-slate-500 italic">No announcements posted.</p>}
-              {announcements.map(ann => (
-                <div key={ann.id} className="bg-white p-4 rounded-xl border border-slate-200 flex justify-between items-start">
-                   <div>
-                      <h4 className="font-bold text-slate-900">{ann.title}</h4>
-                      <p className="text-sm text-slate-600 mt-1">{ann.message}</p>
-                      <div className="text-xs text-slate-400 mt-2">Posted on {ann.date} by {ann.author}</div>
-                   </div>
-                   <button 
-                     onClick={() => onDeleteAnnouncement(ann.id)}
-                     className="text-red-400 hover:text-red-600 p-1"
-                     title="Delete"
-                   >
-                     <Trash2 className="w-4 h-4" />
-                   </button>
-                </div>
-              ))}
-           </div>
-        </div>
-      ) : activeTab === 'specs' ? (
-        /* System Specs / Architecture Tab */
-        <div className="space-y-6">
-           <div className="bg-white rounded-xl border border-slate-200 p-8 shadow-sm">
-             <h2 className="text-2xl font-bold text-slate-900 mb-6">Technical Architecture Specification</h2>
-             <p className="text-slate-600 mb-8 max-w-3xl">
-               The following specifications outline the core infrastructure and design patterns used in this Course Dashboard. 
-               This architecture ensures scalability, security, and interactive capabilities for online Python testing.
-             </p>
-
-             <div className="grid gap-6 md:grid-cols-2">
-                
-                {/* 1. App Framework */}
-                <div className="bg-slate-50 p-6 rounded-lg border border-slate-100">
-                  <div className="flex items-center mb-3">
-                    <div className="p-2 bg-blue-100 text-blue-600 rounded-lg mr-3"><Server className="w-5 h-5" /></div>
-                    <h3 className="font-bold text-slate-900">Application Framework & Hosting</h3>
-                  </div>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    Built using TypeScript and Next.js (simulated). Hosted on Vercel to utilize serverless infrastructure, 
-                    ensuring zero server maintenance and high scalability during high-traffic course periods.
-                  </p>
-                </div>
-
-                {/* 2. Database */}
-                <div className="bg-slate-50 p-6 rounded-lg border border-slate-100">
-                  <div className="flex items-center mb-3">
-                    <div className="p-2 bg-green-100 text-green-600 rounded-lg mr-3"><Database className="w-5 h-5" /></div>
-                    <h3 className="font-bold text-slate-900">Database & Authentication</h3>
-                  </div>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    Powered by Supabase (PostgreSQL) for secure data storage. Handles student authentication and maintains 
-                    relational data for attendance, grades, and role-based access control (RBAC).
-                  </p>
-                </div>
-
-                {/* 3. Python Engine */}
-                <div className="bg-slate-50 p-6 rounded-lg border border-slate-100 border-l-4 border-l-yellow-400">
-                  <div className="flex items-center mb-3">
-                    <div className="p-2 bg-yellow-100 text-yellow-600 rounded-lg mr-3"><Code className="w-5 h-5" /></div>
-                    <h3 className="font-bold text-slate-900">Interactive Python (Pyodide)</h3>
-                  </div>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    The "Practice Arena" utilizes Client-Side Execution via Pyodide (WebAssembly). This allows students 
-                    to execute Python code securely in their own browser without sending arbitrary code to the backend server.
-                  </p>
-                </div>
-
-                {/* 4. Security */}
-                <div className="bg-slate-50 p-6 rounded-lg border border-slate-100">
-                  <div className="flex items-center mb-3">
-                    <div className="p-2 bg-red-100 text-red-600 rounded-lg mr-3"><Shield className="w-5 h-5" /></div>
-                    <h3 className="font-bold text-slate-900">Access Control & Security</h3>
-                  </div>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    Operates on a "Private by Default" model using Middleware. Any request without a valid session token 
-                    is immediately redirected to the login gateway, ensuring course content remains exclusive to enrolled students.
-                  </p>
-                </div>
-
-                {/* 5. Materials */}
-                <div className="bg-slate-50 p-6 rounded-lg border border-slate-100">
-                  <div className="flex items-center mb-3">
-                    <div className="p-2 bg-purple-100 text-purple-600 rounded-lg mr-3"><FileIcon className="w-5 h-5" /></div>
-                    <h3 className="font-bold text-slate-900">Materials Management</h3>
-                  </div>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    Static resources (slides/PDFs) are served via a time-release content delivery system. 
-                    Frontend logic validates the current date against the syllabus schedule to automatically unlock modules.
-                  </p>
-                </div>
-
-             </div>
-           </div>
-        </div>
-      ) : (
-        /* Database Guide Tab */
-        <div className="space-y-6">
-           <div className="bg-white rounded-xl border border-slate-200 p-8 shadow-sm">
-             <div className="flex items-center mb-6">
-                <div className="bg-indigo-100 p-2 rounded-lg text-indigo-600 mr-3">
-                    <HelpCircle className="w-6 h-6" />
-                </div>
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-900">Database Administration Guide</h2>
-                    <p className="text-slate-600">Structure and update procedures for the Student Database.</p>
-                </div>
-             </div>
-
-             <div className="space-y-8">
-                
-                {/* 1. Schema */}
-                <section className="space-y-3">
-                    <h3 className="text-lg font-bold text-slate-900 flex items-center">
-                        <span className="bg-slate-800 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs mr-2">1</span>
-                        Data Structure (Schema)
-                    </h3>
-                    <div className="bg-slate-900 rounded-lg p-4 font-mono text-sm text-green-400 overflow-x-auto">
-                        <p className="text-slate-400 mb-2">// Supabase Table: public.students</p>
-                        <pre>{`{
-  id: uuid (Primary Key),
-  email: varchar(255) (Unique),
-  name: varchar(255),
-  role: 'student' | 'admin',
-  password_hash: varchar(255), // Encrypted
-  attendance_pct: integer (0-100),
-  assignment_scores: jsonb, // { "hw-1": 95, "ex-2": 100 }
-  metadata: jsonb // { "profession": "...", "notes": "..." }
-}`}</pre>
-                    </div>
-                    <p className="text-sm text-slate-600">
-                        The database uses a flexible <code>jsonb</code> column for assignment scores to allow for dynamic addition of new assignments without altering the table schema.
-                    </p>
-                </section>
-
-                <div className="border-t border-slate-100"></div>
-
-                {/* 2. Update Guide */}
-                <section className="space-y-3">
-                    <h3 className="text-lg font-bold text-slate-900 flex items-center">
-                        <span className="bg-slate-800 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs mr-2">2</span>
-                        Updating Rows
-                    </h3>
-                    
-                    <div className="grid md:grid-cols-2 gap-4">
-                        <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-                            <h4 className="font-bold text-sm text-slate-800 mb-2">Via Admin Dashboard (Recommended)</h4>
-                            <p className="text-sm text-slate-600 mb-2">
-                                For most updates (grades, attendance, bio), use the <strong>Student Management</strong> tab in this panel.
-                            </p>
-                            <ol className="list-decimal list-inside text-sm text-slate-600 space-y-1">
-                                <li>Navigate to "Student Management".</li>
-                                <li>Click "Edit" next to the target student.</li>
-                                <li>Modify fields in the modal popup.</li>
-                                <li>Click "Save Changes" to persist.</li>
-                            </ol>
-                        </div>
-
-                        <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-                            <h4 className="font-bold text-sm text-slate-800 mb-2">Via SQL / Supabase Console</h4>
-                            <p className="text-sm text-slate-600 mb-2">
-                                For bulk updates or schema changes:
-                            </p>
-                            <div className="bg-slate-800 p-2 rounded text-xs text-white font-mono">
-                                UPDATE public.students <br/>
-                                SET attendance_pct = 100 <br/>
-                                WHERE email LIKE '%@student.com';
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                <div className="border-t border-slate-100"></div>
-
-                 {/* 3. Password Reset */}
-                 <section className="space-y-3">
-                    <h3 className="text-lg font-bold text-slate-900 flex items-center">
-                        <span className="bg-slate-800 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs mr-2">3</span>
-                        Password Management
-                    </h3>
-                    <p className="text-sm text-slate-600">
-                        <strong>Default Password:</strong> All new student accounts are initialized with the password <code>123456</code>.
-                    </p>
-                    <div className="flex items-start gap-2 text-sm text-slate-600 bg-yellow-50 p-3 rounded-lg border border-yellow-100">
-                        <Terminal className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-                        <div>
-                            Students are prompted to change their password upon first login via their Profile Settings modal (accessible by clicking the gear icon next to their name in the sidebar).
-                        </div>
-                    </div>
-                </section>
-
-             </div>
-           </div>
+      {/* 1. USER MANAGEMENT TAB */}
+      {activeTab === 'users' && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50">
+                    <tr>
+                        <th className="px-6 py-3 text-left font-bold text-slate-500">User</th>
+                        <th className="px-6 py-3 text-left font-bold text-slate-500">Role</th>
+                        <th className="px-6 py-3 text-left font-bold text-slate-500">Email</th>
+                        <th className="px-6 py-3 text-right font-bold text-slate-500">Actions</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                    {filteredUsers.map(user => (
+                        <tr key={user.id} className="hover:bg-slate-50">
+                            <td className="px-6 py-4 font-medium text-slate-900">{user.name}</td>
+                            <td className="px-6 py-4">
+                                <span className={`text-xs px-2 py-1 rounded capitalize ${
+                                    user.role === 'admin' ? 'bg-purple-100 text-purple-700' : 
+                                    user.role === 'guest' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'
+                                }`}>{user.role}</span>
+                            </td>
+                            <td className="px-6 py-4 text-slate-500">{user.email}</td>
+                            <td className="px-6 py-4 text-right">
+                                <Button size="sm" variant="outline" onClick={() => handleEditClick(user)}>
+                                   <Edit2 className="w-3 h-3 mr-1" /> Edit
+                                </Button>
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
         </div>
       )}
 
-      {/* Edit Student Modal */}
-      {isModalOpen && editingStudent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4 animate-fade-in">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center p-6 border-b border-slate-100">
-              <h2 className="text-xl font-bold text-slate-900">Edit Student Record</h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-6">
-              {/* Account Info */}
-              <section className="space-y-4">
-                <h3 className="flex items-center text-sm font-bold text-slate-900 uppercase tracking-wide">
-                  <Key className="w-4 h-4 mr-2" /> Account & Security
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input 
-                    label="Full Name" 
-                    value={editingStudent.name} 
-                    onChange={e => setEditingStudent({...editingStudent, name: e.target.value})} 
-                  />
-                  <Input 
-                    label="Password" 
-                    value={editingStudent.password || ''} 
-                    onChange={e => setEditingStudent({...editingStudent, password: e.target.value})} 
-                  />
-                </div>
-              </section>
+      {/* 2. STATUS & SCORES TAB */}
+      {activeTab === 'scores' && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-xs">
+                <thead className="bg-slate-50">
+                    <tr>
+                        <th className="px-4 py-3 text-left font-bold text-slate-700 sticky left-0 bg-slate-50 z-10 shadow-sm">Student</th>
+                        <th className="px-2 py-3 text-center font-bold text-blue-700 bg-blue-50 border-x border-blue-100">Attd (15)</th>
+                        <th className="px-2 py-3 text-center font-bold text-blue-700 bg-blue-50 border-r border-blue-100">%</th>
+                        {homeworkIds.map((id, i) => (
+                            <th key={id} className="px-2 py-3 text-center font-bold text-slate-500 min-w-[60px]">HW {i+1}</th>
+                        ))}
+                        <th className="px-2 py-3 text-center font-bold text-purple-700 bg-purple-50 border-x border-purple-100">Final</th>
+                        <th className="px-4 py-3 text-center font-bold text-slate-900 bg-slate-100">Total</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                    {filteredUsers.filter(u => u.role === 'student').map(student => {
+                        // Calculations
+                        const attendanceCount = student.attendance || 0;
+                        const attendancePct = Math.round((attendanceCount / 15) * 100);
+                        
+                        // Sum Scores
+                        const hwSum = homeworkIds.reduce((sum, id) => sum + (student.assignmentScores?.[id] || 0), 0);
+                        const finalScore = student.assignmentScores?.['final-project'] || 0;
+                        const totalGrade = hwSum + finalScore;
 
-              <div className="border-t border-slate-100"></div>
+                        return (
+                            <tr key={student.id} className="hover:bg-slate-50">
+                                <td className="px-4 py-3 font-medium text-slate-900 sticky left-0 bg-white z-10 border-r border-slate-100">
+                                    {student.name}
+                                </td>
+                                
+                                {/* Attendance Count Input */}
+                                <td className="px-2 py-3 text-center bg-blue-50/30">
+                                    <input 
+                                        type="number" max="15" min="0"
+                                        className="w-10 text-center border rounded border-blue-200 text-blue-800 font-bold focus:outline-none focus:border-blue-500"
+                                        value={attendanceCount}
+                                        onChange={(e) => handleScoreUpdate(student.id, 'attendance', e.target.value)}
+                                    />
+                                </td>
+                                {/* Auto-Calc % */}
+                                <td className="px-2 py-3 text-center text-slate-500 bg-blue-50/30 border-r border-blue-100">
+                                    {attendancePct}%
+                                </td>
 
-              {/* Profile Info */}
-              <section className="space-y-4">
-                <h3 className="flex items-center text-sm font-bold text-slate-900 uppercase tracking-wide">
-                  <UserIcon className="w-4 h-4 mr-2" /> Profile Details
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input 
-                    label="Attendance (%)" 
-                    type="number" 
-                    value={editingStudent.attendance} 
-                    onChange={e => setEditingStudent({...editingStudent, attendance: parseInt(e.target.value) || 0})} 
-                  />
-                  <Input 
-                    label="Profession" 
-                    value={editingStudent.profession || ''} 
-                    onChange={e => setEditingStudent({...editingStudent, profession: e.target.value})} 
-                  />
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
-                    <textarea 
-                      className="w-full rounded-lg border border-slate-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
-                      rows={3}
-                      value={editingStudent.notes || ''}
-                      onChange={e => setEditingStudent({...editingStudent, notes: e.target.value})}
-                    />
-                  </div>
-                </div>
-              </section>
+                                {/* HW 1-10 Inputs */}
+                                {homeworkIds.map(hwId => (
+                                    <td key={hwId} className="px-2 py-3 text-center border-r border-slate-100">
+                                        <input 
+                                            type="number" 
+                                            className="w-10 text-center border border-slate-200 rounded text-slate-600 focus:outline-none focus:border-blue-500"
+                                            value={student.assignmentScores?.[hwId] || 0}
+                                            onChange={(e) => handleScoreUpdate(student.id, hwId, e.target.value)}
+                                        />
+                                    </td>
+                                ))}
 
-              <div className="border-t border-slate-100"></div>
+                                {/* Final Project */}
+                                <td className="px-2 py-3 text-center bg-purple-50/30 border-l border-purple-100">
+                                    <input 
+                                        type="number" 
+                                        className="w-12 text-center border border-purple-200 rounded text-purple-800 font-bold focus:outline-none focus:border-purple-500"
+                                        value={student.assignmentScores?.['final-project'] || 0}
+                                        onChange={(e) => handleScoreUpdate(student.id, 'final-project', e.target.value)}
+                                    />
+                                </td>
 
-              {/* Grades */}
-              <section className="space-y-4">
-                <h3 className="flex items-center text-sm font-bold text-slate-900 uppercase tracking-wide">
-                  <BookOpen className="w-4 h-4 mr-2" /> Gradebook
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {allHomeworks.map(hw => (
-                    <div key={hw.id} className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                      <label className="block text-xs font-bold text-slate-500 mb-1 truncate" title={hw.title}>
-                        {hw.title}
-                      </label>
-                      <div className="flex items-center">
-                        <input 
-                          type="number"
-                          className="w-full rounded border border-slate-300 p-1 text-sm mr-2"
-                          value={editingStudent.assignmentScores[hw.id] || 0}
-                          onChange={e => handleScoreChange(hw.id, e.target.value)}
-                        />
-                        <span className="text-xs text-slate-400">/{hw.maxScore}</span>
-                      </div>
-                    </div>
-                  ))}
-                  {allHomeworks.length === 0 && <p className="text-sm text-slate-500 italic">No homework assignments found.</p>}
-                </div>
-              </section>
-            </div>
-
-            <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 rounded-b-2xl">
-              <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-              <Button onClick={handleModalSave}>Save Changes</Button>
-            </div>
-          </div>
+                                {/* Total Sum */}
+                                <td className="px-4 py-3 text-center font-black text-slate-900 bg-slate-50 border-l border-slate-200">
+                                    {totalGrade}
+                                </td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
         </div>
+      )}
+
+      {/* 3. ANNOUNCEMENTS TAB */}
+      {activeTab === 'announcements' && (
+        <div className="grid md:grid-cols-3 gap-6">
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm h-fit">
+                <h3 className="font-bold mb-4">Create New</h3>
+                <form onSubmit={createAnnouncement} className="space-y-4">
+                    <Input label="Title" value={newAnnTitle} onChange={e => setNewAnnTitle(e.target.value)} required />
+                    <textarea 
+                        className="w-full border rounded-lg p-2 text-sm" rows={4} 
+                        placeholder="Message..." 
+                        value={newAnnMsg} onChange={e => setNewAnnMsg(e.target.value)} required
+                    />
+                    <Button type="submit" fullWidth>Post</Button>
+                </form>
+            </div>
+            <div className="md:col-span-2 space-y-3 max-h-[500px] overflow-y-auto">
+                {dbAnnouncements.map(ann => (
+                    <div key={ann.id} className={`p-4 rounded-lg border flex justify-between items-start ${ann.is_active ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-100 opacity-75'}`}>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <h4 className="font-bold text-slate-900">{ann.title}</h4>
+                                {ann.is_active ? 
+                                    <span className="text-xs bg-green-100 text-green-700 px-2 rounded">Active</span> : 
+                                    <span className="text-xs bg-slate-200 text-slate-600 px-2 rounded">Draft</span>
+                                }
+                            </div>
+                            <p className="text-sm text-slate-600 mt-1">{ann.message}</p>
+                            <div className="text-xs text-slate-400 mt-2">{new Date(ann.date || Date.now()).toLocaleDateString()}</div>
+                        </div>
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={() => toggleAnnouncement(ann.id, !!ann.is_active)}
+                                className={`text-xs px-3 py-1 rounded border ${ann.is_active ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-green-200 text-green-600 hover:bg-green-50'}`}
+                            >
+                                {ann.is_active ? 'Deactivate' : 'Activate'}
+                            </button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+      )}
+
+      {/* 4. VISITORS TAB */}
+      {activeTab === 'visitors' && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+             <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+                <h3 className="font-bold text-slate-700">Recent Login Activity</h3>
+                <Button size="sm" variant="outline" onClick={fetchLogs}><RefreshCw className="w-3 h-3 mr-2"/> Refresh</Button>
+             </div>
+             <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-white">
+                    <tr>
+                        <th className="px-6 py-3 text-left font-bold text-slate-500">Time</th>
+                        <th className="px-6 py-3 text-left font-bold text-slate-500">User</th>
+                        <th className="px-6 py-3 text-left font-bold text-slate-500">Role</th>
+                        <th className="px-6 py-3 text-left font-bold text-slate-500">IP Address</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                    {logs.map(log => (
+                        <tr key={log.id} className="hover:bg-slate-50">
+                            <td className="px-6 py-3 text-slate-500">
+                                {new Date(log.login_time).toLocaleString()}
+                            </td>
+                            <td className="px-6 py-3 font-medium text-slate-900">{log.user_name}</td>
+                            <td className="px-6 py-3">
+                                <span className={`text-xs px-2 py-1 rounded capitalize ${
+                                    log.role === 'admin' ? 'bg-purple-100 text-purple-700' :
+                                    log.role === 'guest' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'
+                                }`}>{log.role}</span>
+                            </td>
+                            <td className="px-6 py-3 font-mono text-xs text-slate-600">{log.ip_address}</td>
+                        </tr>
+                    ))}
+                </tbody>
+             </table>
+        </div>
+      )}
+
+      {/* EDIT MODAL */}
+      {isModalOpen && editingStudent && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4 animate-fade-in">
+             <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
+                <div className="flex justify-between items-center p-6 border-b border-slate-100">
+                    <h3 className="text-lg font-bold text-slate-900">Edit User</h3>
+                    <button onClick={() => setIsModalOpen(false)}><X className="w-5 h-5 text-slate-400 hover:text-slate-600" /></button>
+                </div>
+                <div className="p-6 space-y-4">
+                    <Input label="Full Name" value={editingStudent.name} onChange={e => setEditingStudent({...editingStudent, name: e.target.value})} />
+                    <Input label="Email" value={editingStudent.email} onChange={e => setEditingStudent({...editingStudent, email: e.target.value})} />
+                    
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Role</label>
+                        <select 
+                            className="w-full border border-slate-300 rounded-lg p-2.5 text-sm"
+                            value={editingStudent.role}
+                            onChange={e => setEditingStudent({...editingStudent, role: e.target.value as any})}
+                        >
+                            <option value="student">Student</option>
+                            <option value="guest">Guest</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+
+                    <Input label="Password" value={editingStudent.password || ''} onChange={e => setEditingStudent({...editingStudent, password: e.target.value})} />
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Profession / Bio</label>
+                        <input className="w-full border border-slate-300 rounded-lg p-2.5 text-sm" value={editingStudent.profession || ''} onChange={e => setEditingStudent({...editingStudent, profession: e.target.value})} />
+                    </div>
+
+                    <div className="pt-2 flex justify-end gap-3">
+                        <Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+                        <Button onClick={handleModalSave}>Save Changes</Button>
+                    </div>
+                </div>
+             </div>
+          </div>
       )}
     </div>
   );

@@ -3,124 +3,93 @@ import { User, StudentRecord } from '../types';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import { Lock, Mail, Terminal } from 'lucide-react';
+import { supabase } from '../data/supabaseClient';
 
 interface LoginViewProps {
   onLogin: (user: User) => void;
-  students: StudentRecord[];
 }
 
-const LoginView: React.FC<LoginViewProps> = ({ onLogin, students }) => {
+const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Helper to log the visit
+  const logVisit = async (user: User) => {
+    try {
+      // 1. Get IP Address (using a public API)
+      const res = await fetch('https://api.ipify.org?format=json');
+      const { ip } = await res.json();
+
+      // 2. Insert into Supabase
+      await supabase.from('access_logs').insert({
+        user_id: user.id,
+        user_name: user.name,
+        role: user.role,
+        ip_address: ip,
+        login_time: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn("Could not log visit:", e);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
-    // Simulate network delay
-    setTimeout(() => {
-      // Admin Login
-      if (email === 'admin' && password === 'ada999') {
-        const adminUser = {
-          id: 'admin',
-          name: 'Course Instructor',
-          email: 'admin@pymastery.com',
-          role: 'admin',
-          avatarUrl: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Admin',
-          attendance: 0,
-          assignmentScores: {}
-        };
-        onLogin(adminUser as any);
-        return;
-      }
+    try {
+        const input = email.trim().toLowerCase();
 
-      // Student Login
-      // Check for strict email OR username match
-      const student = students.find(s => {
-        const username = s.email.split('@')[0];
-        // Allow user to login with just username part or full email
-        const isUserMatch = s.email === email || username === email;
-        const isCredentialMatch = isUserMatch && s.password === password;
-        
-        return isCredentialMatch;
-      });
-      
-      if (student) {
-        onLogin(student);
-      } else {
-        setError('Invalid credentials.');
+        // Fetch User
+        const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .or(`email.eq.${input},name.ilike.${input},email.ilike.${input}%`)
+            .limit(1);
+
+        if (error) throw error;
+
+        const foundUser = data && data.length > 0 ? data[0] : null;
+
+        if (foundUser && foundUser.password === password) {
+            console.log("✅ Login Success");
+
+            // LOG VISITOR BEFORE PROCEEDING
+            await logVisit(foundUser as User);
+
+            onLogin(foundUser as User);
+        } else {
+            setError('Invalid credentials.');
+            setIsLoading(false);
+        }
+
+    } catch (err) {
+        console.error("Login Error:", err);
+        setError('Connection failed. Please try again.');
         setIsLoading(false);
-      }
-    }, 800);
+    }
   };
 
+  // ... (Return JSX same as before) ...
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-4">
+      {/* ... keep existing JSX structure ... */}
       <div className="w-full max-w-md space-y-8 bg-white p-8 rounded-2xl shadow-xl border border-slate-100">
-        
-        {/* Header */}
-        <div className="text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-100 mb-4">
-            <Terminal className="h-7 w-7 text-blue-600" />
-          </div>
-          <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">
-            PyStarter
-          </h2>
-          <p className="mt-2 text-sm text-slate-600">
-            Intro to Python Programming
-          </p>
-        </div>
+         <div className="text-center">
+            <h2 className="mt-2 text-3xl font-bold text-slate-900">PyStarter</h2>
+            <p className="mt-2 text-sm text-slate-600">Intro to Python Programming</p>
+         </div>
 
-        {/* Form */}
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="space-y-4">
-            <Input
-              id="email"
-              name="email"
-              type="text"
-              label="Email or Username"
-              placeholder="Enter your student email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              icon={<Mail className="h-5 w-5" />}
-              error={error}
-            />
-            
-            <Input
-              id="password"
-              name="password"
-              type="password"
-              label="Password"
-              placeholder="••••••••"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              icon={<Lock className="h-5 w-5" />}
-            />
-          </div>
-
-          <Button type="submit" fullWidth isLoading={isLoading} variant="primary">
-            Sign in
-          </Button>
-        </form>
-        
-        {/* No more cheat sheet */}
-        <div className="mt-4 text-center">
-           {/*<p className="text-xs text-slate-400">Default password for new students is <code className="bg-slate-100 px-1 py-0.5 rounded">123456</code></p>*/}
-           <p className="text-xs text-slate-400">Initial password for enrolled students is their full email address; please change it after your first login.</p>
-        </div>
-
+         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+            <Input id="email" label="Username or Email" value={email} onChange={e=>setEmail(e.target.value)} icon={<Mail className="w-5 h-5"/>} required />
+            <Input id="password" type="password" label="Password" value={password} onChange={e=>setPassword(e.target.value)} icon={<Lock className="w-5 h-5"/>} required />
+            <Button type="submit" fullWidth isLoading={isLoading}>Sign in</Button>
+            {error && <p className="text-red-500 text-sm text-center">{error}</p>}
+         </form>
       </div>
-      
-      <p className="mt-8 text-center text-xs text-slate-500">
-        &copy; 2025-2026 PyStarter · Contact: jdr_maggiea@hotmail.com
-      </p>
     </div>
   );
 };

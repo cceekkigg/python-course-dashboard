@@ -16,7 +16,7 @@ const getCourseDays = () => {
 };
 
 // Real date used for logic as requested
-const CURRENT_DATE = new Date(); 
+const CURRENT_DATE = new Date();
 
 interface AssignmentsPanelProps {
   user: StudentRecord;
@@ -26,7 +26,7 @@ interface AssignmentsPanelProps {
 export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComplete }) => {
   const [view, setView] = useState<'calendar' | 'detail'>('calendar');
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
-  
+
   // State
   const [notebookAnswers, setNotebookAnswers] = useState<Record<string, string>>({});
   const [executionResults, setExecutionResults] = useState<Record<string, { output: string, success: boolean }>>({});
@@ -34,6 +34,9 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
 
   // Modal State
   const [showSubmitModal, setShowSubmitModal] = useState(false);
+
+  // Check if user is a guest [NEW CHECK]
+  const isGuest = user.role === 'guest';
 
   const days = getCourseDays();
 
@@ -44,14 +47,13 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
 
   const handleOpenAssignment = (assignment: Assignment) => {
     setSelectedAssignment(assignment);
-    
     // If submitted, load standard answer or user's answer (here just standard/mock since we don't save user text yet in this MVP)
     const initialAnswers: Record<string, string> = {};
     assignment.questions.filter(q => q.type === 'code').forEach(q => {
        initialAnswers[q.id] = q.content; // In a real app, load user's saved code
     });
     setNotebookAnswers(initialAnswers);
-    
+
     // Reset states
     setExecutionResults({});
     setPreCheckResults({});
@@ -67,16 +69,16 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
   const runCell = (cell: NotebookCell) => {
     const code = notebookAnswers[cell.id] || "";
     const expected = cell.expectedOutput || "";
-    
+
     let output = "";
     let success = false;
 
     // Simulating success logic for Exercise
     if (code.includes(expected) || code.includes("print")) {
-        output = expected; 
+        output = expected;
         success = true;
     } else {
-        output = "SyntaxError: Unexpected token..."; 
+        output = "SyntaxError: Unexpected token...";
         success = false;
     }
 
@@ -95,7 +97,7 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
 
   const handleSaveExerciseStatus = () => {
       if (!selectedAssignment || !onComplete) return;
-      onComplete(selectedAssignment.id, 100); 
+      onComplete(selectedAssignment.id, 100);
       alert("Exercise Saved and Completed!");
       setView('calendar');
   };
@@ -112,7 +114,7 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
             // Mock logic: pass if code not empty and contains "return"
             const checks = q.testCases.map(tc => {
                 if (!code || !code.includes("return")) return false;
-                return true; 
+                return true;
             });
 
             results[q.id] = {
@@ -153,14 +155,18 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
             const dateStr = day.toISOString().split('T')[0];
             const dayAssignments = ASSIGNMENTS_DB[dateStr] || [];
             const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-            
+
             // Logic: Unlock if day <= CURRENT_DATE (ignoring time)
             const unlockDate = new Date(day);
             unlockDate.setHours(0,0,0,0);
             const today = new Date(CURRENT_DATE);
             today.setHours(0,0,0,0);
-            
-            const isLocked = unlockDate > today;
+
+            const isDateLocked = unlockDate > today;
+
+            // [NEW] GUEST LOCK LOGIC: Lock everything except the first day (idx 0)
+            const isGuestLocked = isGuest && idx > 0;
+            const finalLocked = isDateLocked || isGuestLocked;
 
             return (
               <div key={idx} className={`min-h-[120px] rounded-xl border p-3 flex flex-col ${isWeekend ? 'bg-slate-50 border-slate-100' : 'bg-white border-slate-200'}`}>
@@ -168,31 +174,37 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                   {day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} <br/>
                   {day.toLocaleDateString('en-US', { weekday: 'short' })}
                 </div>
-                
+
                 <div className="space-y-2 flex-1">
                   {dayAssignments.map(assign => {
                      // Check if completed
                      const completed = isSubmitted(assign.id);
                      const isHomework = assign.type === 'homework';
-                     
+
                      return (
                       <button
                         key={assign.id}
-                        disabled={isLocked}
-                        onClick={() => !isLocked && handleOpenAssignment(assign)}
+                        disabled={finalLocked}
+                        onClick={() => !finalLocked && handleOpenAssignment(assign)}
                         className={`w-full text-left text-xs p-2 rounded border flex items-center justify-between group transition-all
-                          ${completed 
+                          ${completed
                             ? (isHomework ? 'bg-purple-100 border-purple-300 text-purple-800' : 'bg-blue-100 border-blue-300 text-blue-800')
                             : (isHomework ? 'border-purple-200 bg-purple-50 text-purple-700' : 'border-blue-200 bg-blue-50 text-blue-700')
                           }
-                          ${isLocked ? 'opacity-50 cursor-not-allowed grayscale' : 'hover:shadow-md'}
+                          ${finalLocked ? 'opacity-50 cursor-not-allowed grayscale' : 'hover:shadow-md'}
                         `}
                       >
-                        <span className="font-semibold truncate flex items-center">
-                            {completed && <Check className="w-3 h-3 mr-1" />}
-                            {isHomework ? 'HW' : 'EX'}
-                        </span>
-                        {isLocked ? <Lock className="w-3 h-3" /> : <Play className="w-3 h-3 opacity-0 group-hover:opacity-100" />}
+                        <div className="flex-1 min-w-0">
+                            <span className="font-semibold truncate flex items-center">
+                              {completed && <Check className="w-3 h-3 mr-1" />}
+                              {isHomework ? 'HW' : 'EX'}
+                            </span>
+                            {/* [NEW] Show visual cue for Guest Lock */}
+                            {isGuestLocked && (
+                                <span className="text-[9px] uppercase tracking-wide opacity-70 block mt-0.5">Full Course Only</span>
+                            )}
+                        </div>
+                        {finalLocked ? <Lock className="w-3 h-3 flex-shrink-0 ml-1" /> : <Play className="w-3 h-3 opacity-0 group-hover:opacity-100 flex-shrink-0 ml-1" />}
                       </button>
                     );
                   })}
@@ -230,7 +242,7 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
               {isHomework ? `Max Score: ${selectedAssignment?.maxScore}` : 'Practice Mode (No Submission)'}
           </p>
         </div>
-        
+
         <div className="ml-auto flex gap-2">
             {submitted ? (
                 <div className="bg-green-100 text-green-800 px-4 py-2 rounded-lg font-bold flex items-center border border-green-200">
@@ -248,12 +260,12 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                         </Button>
                     </>
                 ) : (
-                    <Button 
-                        variant={exerciseReadyToSave ? 'primary' : 'outline'} 
+                    <Button
+                        variant={exerciseReadyToSave ? 'primary' : 'outline'}
                         onClick={handleSaveExerciseStatus}
                         disabled={!exerciseReadyToSave}
                     >
-                        <CheckCircle className="mr-2 h-4 w-4" /> 
+                        <CheckCircle className="mr-2 h-4 w-4" />
                         {exerciseReadyToSave ? 'Save & Complete' : 'Complete All Tasks'}
                     </Button>
                 )
@@ -266,13 +278,13 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
            <h3 className="font-bold mb-1">Instructions</h3>
            <p className="text-slate-600">{selectedAssignment?.description}</p>
         </div>
-        
+
         {/* Explanation for Homework Buttons */}
         {isHomework && !submitted && (
              <div className="text-xs text-slate-500 bg-slate-100 p-3 rounded flex items-center">
                 <CheckCircle className="w-4 h-4 mr-2 text-slate-400" />
                 <span>
-                    Use <strong>Pre-Check</strong> to run the auto-grader tests against your code. 
+                    Use <strong>Pre-Check</strong> to run the auto-grader tests against your code.
                     Once all tests pass, click <strong>Submit</strong> to finalize your score.
                 </span>
              </div>
@@ -284,7 +296,7 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                <div className="w-12 text-right font-mono text-xs text-slate-400 pt-3 select-none">
                  [{idx+1}]
                </div>
-               
+
                <div className="flex-1 space-y-3">
                  {/* Question Content */}
                  {cell.type === 'markdown' && (
@@ -308,10 +320,10 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                                     )}
                                 </div>
                                 <textarea
-                                className="w-full bg-slate-50 font-mono text-sm p-3 min-h-[120px] resize-y focus:outline-none text-slate-800"
-                                value={notebookAnswers[cell.id] || ''}
-                                onChange={(e) => handleCodeChange(cell.id, e.target.value)}
-                                spellCheck={false}
+                                    className="w-full bg-slate-50 font-mono text-sm p-3 min-h-[120px] resize-y focus:outline-none text-slate-800"
+                                    value={notebookAnswers[cell.id] || ''}
+                                    onChange={(e) => handleCodeChange(cell.id, e.target.value)}
+                                    spellCheck={false}
                                 />
                             </div>
                         ) : (
@@ -321,7 +333,7 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                                 <pre>{notebookAnswers[cell.id] || '# No code submitted'}</pre>
                             </div>
                         )}
-                        
+
                         {/* Exercise Mode: Execution Result */}
                         {!isHomework && executionResults[cell.id] && (
                             <div className={`p-3 rounded text-sm font-mono border ${executionResults[cell.id].success ? 'bg-white border-green-200 text-green-700' : 'bg-white border-red-200 text-red-700'}`}>
@@ -331,7 +343,7 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                         )}
                         {!isHomework && cell.expectedOutput && !submitted && (
                              <div className="text-xs text-slate-500 pl-1">
-                                Expected: <code className="bg-slate-100 px-1 rounded">{cell.expectedOutput}</code>
+                                 Expected: <code className="bg-slate-100 px-1 rounded">{cell.expectedOutput}</code>
                              </div>
                         )}
 
@@ -342,17 +354,16 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                                    <span>Auto-Grader Report</span>
                                    {submitted && <span className="text-green-600">Score: {earnedScore}%</span>}
                                 </h4>
-                                
+
                                 <div className="space-y-2">
-                                    {/* 
-                                      If submitted: Generate 10 mock test cases to show robust grading.
+                                    {/* If submitted: Generate 10 mock test cases to show robust grading.
                                       If pre-check: Use the preCheckResults state.
                                     */}
                                     {(submitted ? Array.from({length: 10}) : (cell.testCases || [])).map((_, i) => {
                                         // Mock display for submitted state vs real precheck state
                                         let status = 'pending';
                                         let inputLabel = `Test Case #${i+1}`;
-                                        
+
                                         if (submitted) {
                                             // If submitted and score is high, show passes
                                             status = earnedScore >= 100 ? 'pass' : (i < 5 ? 'pass' : 'fail');
@@ -364,7 +375,6 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                                         }
 
                                         if (!submitted && !cell.testCases) return null;
-
                                         return (
                                             <div key={i} className="flex items-center text-xs font-mono bg-white p-2 rounded border border-slate-100">
                                                 <div className={`w-4 h-4 rounded-full mr-3 flex items-center justify-center
