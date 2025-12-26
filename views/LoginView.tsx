@@ -63,11 +63,11 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
             .from('users')
             .select('*')
             .or(`email.eq.${input},name.ilike.${input},email.ilike.${input}%`)
-            .limit(1);
+            .limit(5);
 
         if (error) throw error;
 
-        const foundUser = data && data.length > 0 ? data[0] : null;
+        const foundUser = data?.find(u => u.password === password);
 
         if (foundUser && foundUser.password === password) {
             console.log("✅ App Login Success");
