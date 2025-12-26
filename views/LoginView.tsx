@@ -17,21 +17,34 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Helper to log the visit
+  // Helper to log the visit (Optimized for Free Tier limits)
   const logVisit = async (user: User) => {
     try {
-      // 1. Get IP Address (using a public API)
+      // 1. Get IP Address
       const res = await fetch('https://api.ipify.org?format=json');
       const { ip } = await res.json();
 
-      // 2. Insert into Supabase
-      await supabase.from('access_logs').insert({
+      // 2. Efficient Upsert: Update existing row if user+ip matches, otherwise insert.
+      // This prevents database bloat by aggregating logins from the same IP.
+      const { data: existing } = await supabase
+        .from('access_logs')
+        .select('login_count, first_login_at')
+        .match({ user_id: user.id, ip_address: ip })
+        .maybeSingle();
+
+      const newCount = (existing?.login_count || 0) + 1;
+      const firstTime = existing?.first_login_at || new Date().toISOString();
+
+      await supabase.from('access_logs').upsert({
         user_id: user.id,
         user_name: user.name,
         role: user.role,
         ip_address: ip,
-        login_time: new Date().toISOString()
-      });
+        login_count: newCount,
+        first_login_at: firstTime,
+        last_login_at: new Date().toISOString()
+      }, { onConflict: 'user_id, ip_address' });
+
     } catch (e) {
       console.warn("Could not log visit:", e);
     }
@@ -45,7 +58,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
     try {
         const input = email.trim().toLowerCase();
 
-        // 1. Fetch User from your custom table
+        // 1. Fetch User from Custom DB
         const { data, error } = await supabase
             .from('users')
             .select('*')
@@ -59,8 +72,10 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
         if (foundUser && foundUser.password === password) {
             console.log("✅ App Login Success");
 
-            // 2. SECURE HANDSHAKE
-            // If user is Admin, sign them into Supabase Auth to get the storage token.
+            // 2. FORCE SIGN OUT (Clear any stale sessions for 'Cover Login')
+            await supabase.auth.signOut();
+
+            // 3. SECURE HANDSHAKE (Admin Only)
             if (foundUser.role === 'admin') {
                 const { error: authError } = await supabase.auth.signInWithPassword({
                     email: foundUser.email,
@@ -69,16 +84,12 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
 
                 if (authError) {
                     console.warn("⚠️ Admin matched in DB but Supabase Auth failed:", authError.message);
-                    // We don't block login here, but uploads might fail if Auth is missing.
                 } else {
                     console.log("🔐 Secure Admin Session Established");
                 }
-            } else {
-                // For Students/Guests, ensure no stale Admin token exists
-                await supabase.auth.signOut();
             }
 
-            // 3. Log Visit & Proceed
+            // 4. Log Visit & Proceed
             await logVisit(foundUser as User);
             onLogin(foundUser as User);
 
@@ -94,7 +105,6 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
     }
   };
 
-  // Return JSX
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-4">
       <div className="w-full max-w-md space-y-8 bg-white p-8 rounded-2xl shadow-xl border border-slate-100">
@@ -133,7 +143,6 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
            <p className="text-xs text-slate-400">Initial password for enrolled students is email address</p>
            <p className="text-xs text-slate-400">Default password for demo is demo</p>
          </div>
-
       </div>
 
       <p className="mt-8 text-center text-xs text-slate-500">
@@ -145,7 +154,6 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
           jdr_maggiea@hotmail.com
         </a>
       </p>
-
     </div>
   );
 };

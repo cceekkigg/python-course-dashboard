@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../data/supabaseClient';
-import { PracticeQuestion, UserProgress } from '../../types';
+import { PracticeQuestion, UserProgress, User } from '../../types';
 import Button from '../../components/Button';
 import { Play, CheckCircle, RefreshCw, AlertCircle, ArrowRight, Terminal, Lock, Unlock, Clock, Zap, Loader2, Trophy, Award, Medal, Timer, XCircle } from 'lucide-react';
 
@@ -16,19 +16,24 @@ declare global {
   }
 }
 
-const PYTHON_INPUT_SHIM = `
-import sys
-from js import _input_queue
-
+// ----------------------------------------------------------------------
+// SYSTEM PROMPT: Python Shim for Input Mocking (Silent Version)
+// ----------------------------------------------------------------------
+const INPUT_OVERRIDE_CODE = `
 def input(prompt=""):
-    if len(_input_queue) > 0:
-        val = _input_queue.pop(0)
-        print(prompt + str(val))
+    # 'sys_inputs' is injected as a global list before running
+    if 'sys_inputs' in globals() and len(sys_inputs) > 0:
+        val = sys_inputs.pop(0)
         return str(val)
     return ""
 `;
 
-export const PracticePanel: React.FC = () => {
+// [FIX] 1. Define Props to accept the current User
+interface PracticePanelProps {
+  user: User;
+}
+
+export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
   // --- State ---
   const [currentQ, setCurrentQ] = useState<PracticeQuestion | null>(null);
   const [userProgress, setUserProgress] = useState<UserProgress | null>(null);
@@ -48,10 +53,11 @@ export const PracticePanel: React.FC = () => {
   const [attempts, setAttempts] = useState(0);
   const [showReward, setShowReward] = useState<{title: string, msg: string} | null>(null);
 
-  // CHALLENGE TIMER STATE
+  // Challenge Timer
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [isTimedOut, setIsTimedOut] = useState(false);
 
+  // Engine State
   const [isEngineReady, setIsEngineReady] = useState(false);
   const [engineStatus, setEngineStatus] = useState("Loading Engine...");
   const pyodideRef = useRef<any>(null);
@@ -59,7 +65,7 @@ export const PracticePanel: React.FC = () => {
   // --- 1. Initialization ---
   useEffect(() => {
     const init = async () => {
-      // Storage Security Patch
+      // A. Storage Patch
       try { const check = window.sessionStorage; } catch (e) {
         const mockStorage = { length: 0, getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null };
         try {
@@ -68,7 +74,7 @@ export const PracticePanel: React.FC = () => {
         } catch (err) {}
       }
 
-      // Load Pyodide Script
+      // B. Load Pyodide
       if (!window.loadPyodide) {
          setEngineStatus("Downloading Python...");
          await new Promise<void>((resolve, reject) => {
@@ -80,13 +86,11 @@ export const PracticePanel: React.FC = () => {
          });
       }
 
-      // Initialize Engine
+      // C. Init Engine
       try {
         if (!pyodideRef.current) {
           setEngineStatus("Initializing Python...");
           const pyodide = await window.loadPyodide();
-          window._input_queue = [];
-          await pyodide.runPythonAsync(PYTHON_INPUT_SHIM);
           pyodideRef.current = pyodide;
           setIsEngineReady(true);
         }
@@ -94,14 +98,14 @@ export const PracticePanel: React.FC = () => {
         setFeedback({ status: 'error', msg: `Engine Failure: ${err.message}` });
       }
 
-      await fetchUserData();
+      // [FIX] 2. Pass user.id to fetchUserData
+      await fetchUserData(user.id);
       await fetchTopics();
-      // Load initial question
       fetchRandomQuestion('all');
     };
 
     init();
-  }, []);
+  }, [user.id]); // Re-run if user changes
 
   // --- Timer Logic ---
   useEffect(() => {
@@ -110,11 +114,9 @@ export const PracticePanel: React.FC = () => {
         setIsTimedOut(true);
         return;
     }
-
     const timerId = setInterval(() => {
         setTimeLeft(prev => (prev !== null && prev > 0) ? prev - 1 : 0);
     }, 1000);
-
     return () => clearInterval(timerId);
   }, [timeLeft]);
 
@@ -126,18 +128,20 @@ export const PracticePanel: React.FC = () => {
 
   // --- Data Fetching ---
 
-  const fetchUserData = async () => {
-      // Fetch the single summary row for the user
-      // For MVP without strict auth context, we grab the first available or a specific user
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data } = await supabase.from('user_progress').select('*').limit(1).maybeSingle();
+  // [FIX] 3. Fetch progress strictly for this userId
+  const fetchUserData = async (userId: string) => {
+      const { data } = await supabase
+        .from('user_progress')
+        .select('*')
+        .eq('user_id', userId) // <--- STRICT FILTER
+        .maybeSingle();
 
       if (data) {
           setUserProgress(data as UserProgress);
       } else {
-          // Initialize empty local state if no record exists
+          // Initialize empty local state for new user
           setUserProgress({
-              user_id: 'temp',
+              user_id: userId,
               total_score: 0,
               total_count: 0,
               level_counts: {},
@@ -162,9 +166,8 @@ export const PracticePanel: React.FC = () => {
       setShowSolution(false);
       setAttempts(0);
       setIsTimedOut(false);
-      setTimeLeft(null); // Reset timer
+      setTimeLeft(null);
 
-      // 1. Count Questions
       let query = supabase.from('practice_questions').select('*', { count: 'exact', head: true });
       if (topic !== 'all') query = query.eq('topic', topic);
       const { count } = await query;
@@ -175,7 +178,6 @@ export const PracticePanel: React.FC = () => {
           return;
       }
 
-      // 2. Fetch Random Question
       const randomOffset = Math.floor(Math.random() * count);
       let dataQuery = supabase.from('practice_questions').select('*').range(randomOffset, randomOffset);
       if (topic !== 'all') dataQuery = dataQuery.eq('topic', topic);
@@ -187,7 +189,6 @@ export const PracticePanel: React.FC = () => {
           setCurrentQ(question);
           setCode(question.starter_code);
 
-          // [NEW] Challenge Mode Timer (5 minutes = 300s)
           if (question.difficulty === 'challenge') {
               setTimeLeft(300);
           }
@@ -208,10 +209,13 @@ export const PracticePanel: React.FC = () => {
       let logs: string[] = [];
 
       for (const testCase of currentQ.test_cases) {
-         window._input_queue = [...testCase.inputs];
          const outputBuffer: string[] = [];
          pyodideRef.current.setStdout({ batched: (msg: string) => outputBuffer.push(msg) });
-         await pyodideRef.current.runPythonAsync(code);
+
+         const inputsDefinition = `sys_inputs = ${JSON.stringify(testCase.inputs)}`;
+         const fullScript = `${inputsDefinition}\n${INPUT_OVERRIDE_CODE}\n${code}`;
+
+         await pyodideRef.current.runPythonAsync(fullScript);
 
          const actualRaw = outputBuffer.join('\n').trim();
          const expectedRaw = testCase.expected.trim();
@@ -227,15 +231,16 @@ export const PracticePanel: React.FC = () => {
       const runtime = Math.round(endTime - startTime);
 
       if (allPassed) {
-         handleSuccess();
+         handleSuccess(runtime);
          setFeedback({
              status: 'success',
              msg: `Success! (+${currentQ.score_value} XP)`,
              output: "Great job! Code works efficiently.",
              runtime
          });
-         setTimeLeft(null); // Stop timer on success
+         setTimeLeft(null);
       } else {
+         handleFailure();
          setFeedback({ status: 'error', msg: 'Logic Error', output: logs.join('\n') });
       }
 
@@ -244,36 +249,31 @@ export const PracticePanel: React.FC = () => {
     }
   };
 
-  // --- Persistence Logic ---
-  const handleSuccess = async () => {
-    if (!currentQ || !userProgress) return;
+  // --- Persistence ---
+  const handleFailure = async () => {
+      console.log("Validation failed.");
+  };
 
-    // Prevent re-scoring same question
+  const handleSuccess = async (runtime: number) => {
+    // [FIX] 4. Use 'user.id' from props, do not fetch 'any' user from DB
+    if (!currentQ || !userProgress) return;
     if (userProgress.solved_ids.includes(currentQ.id)) return;
 
-    // 1. Update Core Stats
     const newTotalScore = userProgress.total_score + currentQ.score_value;
     const newTotalCount = userProgress.total_count + 1;
 
-    // 2. Update Topic Counters
     const newTopicCounts = { ...userProgress.topic_counts };
     newTopicCounts[currentQ.topic] = (newTopicCounts[currentQ.topic] || 0) + 1;
 
-    // 3. Update Level Counters
     const newLevelCounts = { ...userProgress.level_counts };
     newLevelCounts[currentQ.difficulty] = (newLevelCounts[currentQ.difficulty] || 0) + 1;
 
-    // 4. Track ID
     const newSolvedIds = [...userProgress.solved_ids, currentQ.id];
 
     checkRewardMilestones(userProgress.total_score, newTotalScore);
 
-    // Get User ID (Mock or Real)
-    const { data: users } = await supabase.from('users').select('id').limit(1);
-    const userId = users?.[0]?.id;
-
     const updatedProgress = {
-        user_id: userId, // Primary Key
+        user_id: user.id, // <--- DIRECT LINK TO LOGGED-IN USER
         total_score: newTotalScore,
         total_count: newTotalCount,
         level_counts: newLevelCounts,
@@ -281,10 +281,7 @@ export const PracticePanel: React.FC = () => {
         solved_ids: newSolvedIds
     };
 
-    // Optimistic Update
     setUserProgress(updatedProgress as UserProgress);
-
-    // Save to DB
     await supabase.from('user_progress').upsert(updatedProgress);
   };
 
@@ -318,7 +315,6 @@ export const PracticePanel: React.FC = () => {
   return (
     <div className="h-full flex flex-col gap-6 animate-fade-in relative">
 
-       {/* Rewards Toast */}
        {showReward && (
            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 animate-bounce">
                <div className="bg-yellow-100 border-2 border-yellow-400 text-yellow-800 px-6 py-4 rounded-xl shadow-xl flex items-center gap-4">
@@ -331,7 +327,6 @@ export const PracticePanel: React.FC = () => {
            </div>
        )}
 
-       {/* Time Out Modal */}
        {isTimedOut && (
            <div className="absolute inset-0 z-40 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center rounded-xl">
                <div className="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm animate-bounce">
@@ -347,7 +342,6 @@ export const PracticePanel: React.FC = () => {
            </div>
        )}
 
-       {/* Header */}
        <header className="flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Practice Arena</h1>
@@ -355,9 +349,9 @@ export const PracticePanel: React.FC = () => {
           </div>
           <div className="flex gap-6 items-center">
              <div className="flex gap-2">
-                 {(userProgress?.total_score || 0) >= 100 && <Award className="w-6 h-6 text-orange-400" title="Bronze Rank" />}
-                 {(userProgress?.total_score || 0) >= 500 && <Medal className="w-6 h-6 text-slate-400" title="Silver Rank" />}
-                 {(userProgress?.total_score || 0) >= 1000 && <Trophy className="w-6 h-6 text-yellow-500" title="Gold Rank" />}
+                 {(userProgress?.total_score || 0) >= 100 && <Award className="w-6 h-6 text-orange-400" title="Bronze" />}
+                 {(userProgress?.total_score || 0) >= 500 && <Medal className="w-6 h-6 text-slate-400" title="Silver" />}
+                 {(userProgress?.total_score || 0) >= 1000 && <Trophy className="w-6 h-6 text-yellow-500" title="Gold" />}
              </div>
 
              <div className="bg-slate-100 px-4 py-2 rounded-lg border border-slate-200 flex flex-col items-end">
@@ -367,7 +361,6 @@ export const PracticePanel: React.FC = () => {
           </div>
        </header>
 
-       {/* Controls */}
        <div className="flex gap-4">
         <select
           className="rounded-lg border-slate-300 text-sm focus:ring-blue-500 min-w-[150px]"
@@ -396,7 +389,6 @@ export const PracticePanel: React.FC = () => {
              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex-1 relative overflow-hidden">
                 {currentQ ? (
                     <>
-                        {/* Timer Display */}
                         {timeLeft !== null && (
                             <div className={`absolute top-0 right-0 p-4 flex items-center font-mono font-bold text-lg ${timeLeft < 60 ? 'text-red-600 animate-pulse' : 'text-slate-700'}`}>
                                 <Timer className="w-5 h-5 mr-2" />

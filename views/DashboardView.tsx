@@ -119,7 +119,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       case DashboardViewType.MATERIALS:
         return <MaterialsPanel user={user} />;
       case DashboardViewType.PRACTICE:
-        return <PracticePanel />;
+        return <PracticePanel user={user}/>;
       case DashboardViewType.ASSIGNMENTS:
         return user.role !== 'guest' ? (
              <AssignmentsPanel user={user as StudentRecord} onComplete={handleAssignmentComplete} />
