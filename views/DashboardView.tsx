@@ -117,7 +117,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         const activeAnnouncements = announcements.filter(a => a.is_active !== false);
         return <HomePanel user={user as StudentRecord} announcements={activeAnnouncements} />;
       case DashboardViewType.MATERIALS:
-        return <MaterialsPanel />;
+        return <MaterialsPanel user={user} />;
       case DashboardViewType.PRACTICE:
         return <PracticePanel />;
       case DashboardViewType.ASSIGNMENTS:
@@ -147,7 +147,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="flex h-16 items-center px-6 border-b border-slate-800">
           <div className="flex items-center space-x-2 font-bold text-xl tracking-wider">
              <Code className="text-yellow-400" />
-             <span>PY<span className="text-yellow-400">STARTER</span></span>
+             <span>PY<span className="text-yellow-400">Pathway</span></span>
           </div>
         </div>
 

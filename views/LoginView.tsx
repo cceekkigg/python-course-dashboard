@@ -1,5 +1,7 @@
+// FILE: src/views/LoginView.tsx
+
 import React, { useState } from 'react';
-import { User, StudentRecord } from '../types';
+import { User } from '../types';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import { Lock, Mail, Terminal } from 'lucide-react';
@@ -43,7 +45,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
     try {
         const input = email.trim().toLowerCase();
 
-        // Fetch User
+        // 1. Fetch User from your custom table
         const { data, error } = await supabase
             .from('users')
             .select('*')
@@ -55,12 +57,31 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
         const foundUser = data && data.length > 0 ? data[0] : null;
 
         if (foundUser && foundUser.password === password) {
-            console.log("✅ Login Success");
+            console.log("✅ App Login Success");
 
-            // LOG VISITOR BEFORE PROCEEDING
+            // 2. SECURE HANDSHAKE
+            // If user is Admin, sign them into Supabase Auth to get the storage token.
+            if (foundUser.role === 'admin') {
+                const { error: authError } = await supabase.auth.signInWithPassword({
+                    email: foundUser.email,
+                    password: password
+                });
+
+                if (authError) {
+                    console.warn("⚠️ Admin matched in DB but Supabase Auth failed:", authError.message);
+                    // We don't block login here, but uploads might fail if Auth is missing.
+                } else {
+                    console.log("🔐 Secure Admin Session Established");
+                }
+            } else {
+                // For Students/Guests, ensure no stale Admin token exists
+                await supabase.auth.signOut();
+            }
+
+            // 3. Log Visit & Proceed
             await logVisit(foundUser as User);
-
             onLogin(foundUser as User);
+
         } else {
             setError('Invalid credentials.');
             setIsLoading(false);
@@ -73,23 +94,58 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
     }
   };
 
-  // ... (Return JSX same as before) ...
+  // Return JSX
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-4">
-      {/* ... keep existing JSX structure ... */}
       <div className="w-full max-w-md space-y-8 bg-white p-8 rounded-2xl shadow-xl border border-slate-100">
          <div className="text-center">
-            <h2 className="mt-2 text-3xl font-bold text-slate-900">PyStarter</h2>
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-100 mb-4">
+                <Terminal className="h-7 w-7 text-blue-600" />
+            </div>
+            <h2 className="mt-2 text-3xl font-bold text-slate-900">PyPathway</h2>
             <p className="mt-2 text-sm text-slate-600">Intro to Python Programming</p>
          </div>
 
          <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-            <Input id="email" label="Username or Email" value={email} onChange={e=>setEmail(e.target.value)} icon={<Mail className="w-5 h-5"/>} required />
-            <Input id="password" type="password" label="Password" value={password} onChange={e=>setPassword(e.target.value)} icon={<Lock className="w-5 h-5"/>} required />
+            <Input
+              id="email"
+              label="Username or Email"
+              placeholder="e.g. demo"
+              value={email}
+              onChange={e=>setEmail(e.target.value)}
+              icon={<Mail className="w-5 h-5"/>}
+              required
+            />
+            <Input
+              id="password"
+              type="password"
+              label="Password"
+              value={password}
+              onChange={e=>setPassword(e.target.value)}
+              icon={<Lock className="w-5 h-5"/>}
+              required
+            />
             <Button type="submit" fullWidth isLoading={isLoading}>Sign in</Button>
             {error && <p className="text-red-500 text-sm text-center">{error}</p>}
          </form>
+
+         <div className="mt-4 text-center">
+           <p className="text-xs text-slate-400">Initial password for enrolled students is email address</p>
+           <p className="text-xs text-slate-400">Default password for demo is demo</p>
+         </div>
+
       </div>
+
+      <p className="mt-8 text-center text-xs text-slate-500">
+        Contact:{" "}
+        <a
+          href="mailto:jdr_maggiea@hotmail.com"
+          className="hover:text-slate-700 underline"
+        >
+          jdr_maggiea@hotmail.com
+        </a>
+      </p>
+
     </div>
   );
 };

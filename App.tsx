@@ -1,70 +1,82 @@
+// ==============================================================================
+// FILE PATH: App.tsx
+// ==============================================================================
+
 import React, { useState } from 'react';
+import { supabase } from './data/supabaseClient';
 import { User, AppView, StudentRecord } from './types';
 import LoginView from './views/LoginView';
 import DashboardView from './views/DashboardView';
-import { supabase } from './data/supabaseClient';
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<AppView>(AppView.LOGIN);
   const [user, setUser] = useState<User | null>(null);
-
-  // 1. CLEANUP: We no longer store the huge "students" list in App state
   const [students, setStudents] = useState<StudentRecord[]>([]);
 
-  // 2. NEW LOGIC: Only fetch class list IF the logged-in user is an Admin
+  /**
+   * Fetches full class list. Only accessible by Admins.
+   */
   const loadClassData = async () => {
-      const { data } = await supabase.from('users').select('*');
+    try {
+      const { data, error } = await supabase.from('users').select('*');
+      if (error) throw error;
       if (data) setStudents(data as StudentRecord[]);
+    } catch (err) {
+      console.error("Failed to load class data:", err);
+    }
   };
 
   const handleLogin = (loggedInUser: User) => {
     setUser(loggedInUser);
     setCurrentView(AppView.DASHBOARD);
 
-    // Only load the full class list if we are an Admin
     if (loggedInUser.role === 'admin') {
-        loadClassData();
+      loadClassData();
     }
   };
 
   const handleLogout = () => {
     setUser(null);
-    setStudents([]); // Clear data on logout
+    setStudents([]);
     setCurrentView(AppView.LOGIN);
   };
 
-  // 3. PERSISTENCE FIX: This function now saves to Supabase
+  /**
+   * Handles user updates (Optimistic UI + Supabase Persistence)
+   */
   const handleUpdateUser = async (updatedUser: User) => {
-    // A. Guest Check
+    // 1. Guest Guard
     if (updatedUser.role === 'guest') {
-        alert("🔒 Demo Mode: Changes are not saved.");
-        setUser(updatedUser);
-        return;
+      alert("🔒 Demo Mode: Changes are not saved.");
+      setUser(updatedUser); // Update local state only for demo feel
+      return;
     }
 
-    // B. Optimistic Update (Screen updates instantly)
+    // 2. Optimistic Update
     setUser(updatedUser);
 
-    // C. Database Update (The missing piece!)
+    // 3. Database Update (Persist Student Data)
     if (updatedUser.role === 'student') {
-        const { error } = await supabase
-            .from('users')
-            .update({
-                password: updatedUser.password,
-                assignmentScores: (updatedUser as StudentRecord).assignmentScores,
-                attendance: (updatedUser as StudentRecord).attendance,
-                notes: (updatedUser as StudentRecord).notes,
-                profession: (updatedUser as StudentRecord).profession,
-                avatarUrl: updatedUser.avatarUrl
-            })
-            .eq('id', updatedUser.id); // IMPORTANT: Update specific row ID
+      const studentData = updatedUser as StudentRecord;
 
-        if (error) {
-            console.error("Save failed:", error);
-            alert("Error saving data to database.");
-        } else {
-            console.log("✅ Data saved to Supabase");
-        }
+      const { error } = await supabase
+        .from('users')
+        .update({
+          password: updatedUser.password,
+          assignmentScores: studentData.assignmentScores,
+          attendance: studentData.attendance,
+          notes: studentData.notes,
+          profession: studentData.profession,
+          avatarUrl: updatedUser.avatarUrl
+        })
+        .eq('id', updatedUser.id);
+
+      if (error) {
+        console.error("Save failed:", error);
+        alert("Error saving data to database.");
+      } else {
+        console.log("✅ Data saved to Supabase");
+      }
     }
   };
 

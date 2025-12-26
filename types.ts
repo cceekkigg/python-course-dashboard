@@ -1,3 +1,7 @@
+// ==============================================================================
+// FILE PATH: types.ts
+// ==============================================================================
+
 export type Role = 'student' | 'admin' | 'guest';
 
 export interface User {
@@ -10,7 +14,7 @@ export interface User {
 }
 
 export interface StudentRecord extends User {
-  attendance: number; // Percentage
+  attendance: number; // Percentage or Count depending on usage (0-15)
   assignmentScores: Record<string, number>; // assignmentId -> score
   profession?: string;
   notes?: string;
@@ -56,19 +60,19 @@ export interface Assignment {
 export interface NotebookCell {
   id: string;
   type: 'markdown' | 'code';
-  content: string; // The question or the code starter
+  content: string;
   hint?: string;
   expectedOutput?: string;
-  testCases?: TestCase[]; // For auto-grading simulation
+  testCases?: TestCase[];
 }
 
 export interface PracticeQuestion {
   id: string;
-  topicId: string; // Links to CourseWeek ID
+  topicId: string;
   points: number;
   question: string;
   starterCode: string;
-  solution: string; 
+  solution: string;
   expectedOutput: string;
   difficulty: 'easy' | 'medium' | 'hard';
 }
@@ -90,6 +94,42 @@ export interface AccessLog {
   login_time: string;
 }
 
+export interface Material {
+  id: string;
+  title: string;
+  type: 'pdf' | 'csv' | 'slides'  | 'png' | 'link';
+  url: string;
+  week_id?: string;
+  day_id?: string;
+}
+
+export interface TestCase {
+  inputs: string[]; // For input() mocking
+  expected: string;
+}
+
+export interface UserProgress {
+  user_id: string;
+  total_score: number;
+  total_count: number;
+  level_counts: Record<string, number>;
+  topic_counts: Record<string, number>;
+  solved_ids: string[];
+}
+
+export interface PracticeQuestion {
+  id: string;
+  topic: string;
+  title: string;
+  description: string;
+  difficulty: 'very_easy' | 'easy' | 'medium' | 'hard' | 'challenge';
+  score_value: number;
+  input_mode: 'none' | 'single' | 'multiple';
+  starter_code: string;
+  solution_code: string;
+  test_cases: TestCase[]; // Ensure TestCase is defined
+}
+
 export enum DashboardViewType {
   HOME = 'HOME',
   MATERIALS = 'MATERIALS',
@@ -101,4 +141,10 @@ export enum DashboardViewType {
 export enum AppView {
   LOGIN = 'LOGIN',
   DASHBOARD = 'DASHBOARD',
+}
+
+// Pyodide Type Definitions
+export interface PyodideInterface {
+  runPythonAsync: (code: string) => Promise<any>;
+  setStdout: (options: { batched: (msg: string) => void }) => void;
 }

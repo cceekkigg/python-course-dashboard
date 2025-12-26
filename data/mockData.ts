@@ -39,47 +39,93 @@ export const INITIAL_ANNOUNCEMENTS: Announcement[] = [
 // Course Structure (Weeks > Days > Materials)
 export const COURSE_WEEKS: CourseWeek[] = [
   {
-    id: "w1", weekNumber: 1, title: "Variables & Data Types", description: "Integers, Floats, Strings, and Booleans.", isLocked: false,
+    id: "w1", weekNumber: 1, title: "Preparation Week",
+    description: "", isLocked: false,
     days: [
       {
-        id: "w1d1", title: "Day 1: Introduction",
-        materials: [
-          { id: "m1", title: "Lecture Slides: Intro", type: "slides", url: "#" },
-          { id: "m2", title: "Setup Guide.pdf", type: "pdf", url: "#" }
-        ]
+        id: "w1d1", title: "Course Preparation Guide",
+        materials: []
+      },
+    ]
+  },
+  {
+    id: "w2", weekNumber: 2, title: "Control Flow & Logic",
+    description: "Functions, Classes, modules", isLocked: true,
+    days: [
+      {
+        id: "w2d1", title: "Day 1: Basic Grammar",
+        materials: []
       },
       {
-        id: "w1d2", title: "Day 2: Basic Types",
-        materials: [
-          { id: "m3", title: "Data Types Cheatsheet", type: "pdf", url: "#" },
-          { id: "m4", title: "practice_data.csv", type: "csv", url: "#" }
-        ]
+        id: "w2d2", title: "Day 2: Data Type & Operation I",
+        materials: []
+      },
+      {
+        id: "w2d3", title: "Day 3: Data Type & Operation II",
+        materials: []
+      },
+      {
+        id: "w2d4", title: "Day 4: Debugging & File Operation",
+        materials: []
+      },
+      {
+        id: "w2d5", title: "Day 5: For-loop for More",
+        materials: []
       }
     ]
   },
   {
-    id: "w2", weekNumber: 2, title: "Control Flow & Logic", description: "If/Else statements and logic gates.", isLocked: false,
+    id: "w3", weekNumber: 3, title: "Loops & Iteration",
+    description: "For loops and While loops.", isLocked: true,
     days: [
       {
-        id: "w2d1", title: "Day 1: Conditionals",
-        materials: [
-           { id: "m5", title: "Logic Tables", type: "pdf", url: "#" }
-        ]
+        id: "w3d1", title: "Day 1: Code Reuse I",
+        materials: []
+      },
+      {
+        id: "w3d2", title: "Day 2: Code Reuse II",
+        materials: []
+      },
+      {
+        id: "w3d3", title: "Day 3: Code Reuse III",
+        materials: []
+      },
+      {
+        id: "w3d4", title: "Day 4: Data Analysis Modules",
+        materials: []
+      },
+      {
+        id: "w3d5", title: "Day 4: Data Visualization Modules",
+        materials: []
       }
     ]
   },
   {
-    id: "w3", weekNumber: 3, title: "Loops & Iteration", description: "For loops and While loops.", isLocked: true,
-    days: []
+    id: "w4", weekNumber: 4, title: "Functions",
+    description: "Defining and calling functions.", isLocked: true,
+    days: [
+      {
+        id: "w4d1", title: "Day 1: Basic Scraping",
+        materials: []
+      },
+      {
+        id: "w4d2", title: "Day 2: AI-Assisted Programming",
+        materials: []
+      },
+      {
+        id: "w4d3", title: "Day 3: [optional] Final Project",
+        materials: []
+      },
+      {
+        id: "w4d4", title: "Day 4: [optional] Final Project",
+        materials: []
+      },
+      {
+        id: "w4d5", title: "Guest Talk",
+        materials: []
+      }]
   },
-  {
-    id: "w4", weekNumber: 4, title: "Functions", description: "Defining and calling functions.", isLocked: true,
-    days: []
-  },
-  {
-    id: "w5", weekNumber: 5, title: "Data Structures", description: "Lists, Dictionaries, and Sets.", isLocked: true,
-    days: []
-  },
+
 ];
 
 // Practice Questions
