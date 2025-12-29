@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StudentRecord, Announcement } from '../../types';
 import { Clock, Calendar, AlertCircle, ChevronLeft, ChevronRight, Megaphone } from 'lucide-react';
 import { COURSE_NAME, COURSE_END_DATE } from '../../data/mockData';
-import Button from '../../components/Button';
+import { supabase } from '../../data/supabaseClient';
 
 interface HomePanelProps {
   user: StudentRecord;
@@ -10,19 +10,44 @@ interface HomePanelProps {
 }
 
 export const HomePanel: React.FC<HomePanelProps> = ({ user, announcements }) => {
-  // Safe access to assignment scores
-  const scores = user.assignmentScores || {};
-  const scoreValues = Object.values(scores);
-  
-  // Calculate average, default to 0 if no scores
-  const averageScore = scoreValues.length > 0 
-    ? Math.round(scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length) 
-    : 0;
+  // Stats State
+  const [stats, setStats] = useState({ score: 0, attendance: 0 });
 
   // Carousel State
   const [currentAnnIndex, setCurrentAnnIndex] = useState(0);
   const carouselItems = announcements.slice(0, 3); // Max 3 items
 
+  // 1. FETCH DASHBOARD STATS
+  useEffect(() => {
+    const fetchStats = async () => {
+      // Guest mode: defaults to 0
+      if (user.role === 'guest') return;
+
+      const { data } = await supabase
+        .from('user_assignment_progress')
+        .select('assignment_id, status, score')
+        .eq('user_id', user.id);
+
+      if (data) {
+         // A. Attendance: Count completed exercises (Mock total: 15)
+         const completedExercises = data.filter(d =>
+             d.assignment_id.startsWith('ex-') && d.status === 'submitted'
+         ).length;
+         const attendancePct = Math.min(100, Math.round((completedExercises / 15) * 100));
+
+         // B. Total Score: Sum of homework scores (Max 100)
+         const totalScore = data
+             .filter(d => d.assignment_id.startsWith('hw-'))
+             .reduce((sum, curr) => sum + (curr.score || 0), 0);
+
+         setStats({ score: totalScore, attendance: attendancePct });
+      }
+    };
+
+    fetchStats();
+  }, [user.id]);
+
+  // Carousel Handlers
   const nextAnnouncement = () => {
     setCurrentAnnIndex((prev) => (prev + 1) % carouselItems.length);
   };
@@ -43,18 +68,18 @@ export const HomePanel: React.FC<HomePanelProps> = ({ user, announcements }) => 
         <div className="rounded-xl bg-white p-6 shadow-sm border border-slate-100 flex items-center justify-between">
           <div>
             <p className="text-sm font-medium text-slate-500">Attendance</p>
-            <p className="text-2xl font-bold text-slate-900">{user.attendance || 0}%</p>
+            <p className="text-2xl font-bold text-slate-900">{stats.attendance}%</p>
           </div>
           <div className="h-10 w-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
             <Clock className="h-5 w-5" />
           </div>
         </div>
-        
+
         <div className="rounded-xl bg-white p-6 shadow-sm border border-slate-100 flex items-center justify-between">
           <div>
             <p className="text-sm font-medium text-slate-500">Current Score</p>
             <p className="text-2xl font-bold text-slate-900">
-              {averageScore}/100
+              {stats.score}/100
             </p>
           </div>
           <div className="h-10 w-10 rounded-full bg-green-50 flex items-center justify-center text-green-600">
@@ -107,7 +132,7 @@ export const HomePanel: React.FC<HomePanelProps> = ({ user, announcements }) => 
              <div className="relative rounded-xl bg-gradient-to-br from-indigo-600 to-blue-700 text-white p-6 shadow-md flex-1 flex flex-col justify-between overflow-hidden">
                 {/* Background Decor */}
                 <div className="absolute top-0 right-0 -mr-10 -mt-10 h-32 w-32 rounded-full bg-white opacity-10 blur-2xl"></div>
-                
+
                 <div>
                   <div className="flex justify-between items-start mb-4">
                      <h3 className="font-bold text-lg flex items-center">
@@ -118,7 +143,7 @@ export const HomePanel: React.FC<HomePanelProps> = ({ user, announcements }) => 
                         {currentAnnIndex + 1} / {carouselItems.length}
                      </span>
                   </div>
-                  
+
                   <div className="min-h-[100px] animate-fade-in" key={carouselItems[currentAnnIndex].id}>
                      <h4 className="text-xl font-bold mb-2">{carouselItems[currentAnnIndex].title}</h4>
                      <p className="text-blue-100 text-sm leading-relaxed">
@@ -136,7 +161,7 @@ export const HomePanel: React.FC<HomePanelProps> = ({ user, announcements }) => 
                      <ChevronLeft className="w-4 h-4" />
                    </button>
                    <button onClick={nextAnnouncement} className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors">
-                     <ChevronRight className="w-4 h-4" />
+                      <ChevronRight className="w-4 h-4" />
                    </button>
                 </div>
              </div>

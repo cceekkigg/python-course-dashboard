@@ -130,6 +130,29 @@ export interface PracticeQuestion {
   test_cases: TestCase[]; // Ensure TestCase is defined
 }
 
+export interface AssignmentContent {
+  id: string;
+  day_index: number;
+  type: 'exercise' | 'homework';
+  title: string;
+  description: string;
+  max_score: number;
+  questions: NotebookCell[];
+}
+
+export interface UserAssignmentProgress {
+  assignment_id: string;
+  status: 'in_progress' | 'submitted';
+  score: number;
+  saved_answers?: Record<string, string>;
+}
+
+export interface AssignmentUI extends AssignmentContent {
+  user_status?: 'in_progress' | 'submitted';
+  user_score?: number;
+  is_locked?: boolean;
+}
+
 export enum DashboardViewType {
   HOME = 'HOME',
   MATERIALS = 'MATERIALS',

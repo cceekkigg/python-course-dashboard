@@ -1,14 +1,12 @@
-// ==============================================================================
-// FILE PATH: views/panels/AssignmentsPanel.tsx
-// ==============================================================================
+import React, { useState, useEffect } from 'react';
+import { supabase } from '../../data/supabaseClient';
+import { StudentRecord } from '../../types';
+import { COURSE_START_DATE } from '../../data/mockData';
+import { Lock, Play, Check } from 'lucide-react';
 
-import React, { useState } from 'react';
-import { Assignment, NotebookCell, StudentRecord } from '../../types';
-import { COURSE_START_DATE, ASSIGNMENTS_DB } from '../../data/mockData';
-import Button from '../../components/Button';
-import { Lock, Check, ChevronLeft, Play, Save, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
-
-const CURRENT_DATE = new Date(); // Mock "Today"
+import { ExercisePanel } from './ExercisePanel';
+import { HomeworkPanel } from './HomeworkPanel';
+import { AssignmentWithStatus } from './AssignmentUtils';
 
 interface AssignmentsPanelProps {
   user: StudentRecord;
@@ -17,321 +15,166 @@ interface AssignmentsPanelProps {
 
 export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComplete }) => {
   const [view, setView] = useState<'calendar' | 'detail'>('calendar');
-  const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
+  const [assignmentsMap, setAssignmentsMap] = useState<Record<number, AssignmentWithStatus[]>>({});
+  const [selectedAssignment, setSelectedAssignment] = useState<AssignmentWithStatus | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const handleOpenAssignment = (assignment: Assignment) => {
+  // 1. Fetch Data
+  const loadData = async () => {
+    setLoading(true);
+    try {
+        // Fetch Assignment Content
+        const { data: contentData } = await supabase.from('content_assignments').select('*');
+
+        // Fetch User Progress
+        let progressMap: Record<string, { status: string; score: number }> = {};
+
+        // A. Check user prop first (Optimistic UI)
+        if (user.assignmentScores) {
+             Object.entries(user.assignmentScores).forEach(([id, score]) => {
+                 progressMap[id] = { status: 'submitted', score: score };
+             });
+        }
+
+        // B. Fallback to DB fetch (if user is not guest)
+        if (user.role !== 'guest') {
+             const { data: progressData } = await supabase.from('user_assignment_progress')
+                .select('assignment_id, status, score')
+                .eq('user_id', user.id);
+             progressData?.forEach((p: any) => {
+                 progressMap[p.assignment_id] = { status: p.status, score: p.score };
+             });
+        }
+
+        const today = new Date();
+        const tempMap: Record<number, AssignmentWithStatus[]> = {};
+
+        (contentData || []).forEach((item: any) => {
+           const releaseDate = new Date(COURSE_START_DATE);
+           releaseDate.setDate(releaseDate.getDate() + item.day_index);
+
+           // Lock Logic: Locked if date is future OR if guest tries to access Day > 1
+           const isDateLocked = releaseDate > today;
+           const isGuestLocked = user.role === 'guest' && item.day_index > 0;
+
+           const enriched: AssignmentWithStatus = {
+              ...item,
+              date: releaseDate.toISOString().split('T')[0],
+              questions: item.questions || [],
+              user_status: progressMap[item.id]?.status as any || 'in_progress',
+              user_score: progressMap[item.id]?.score || 0,
+              is_locked: isDateLocked || isGuestLocked
+           };
+
+           if (!tempMap[item.day_index]) tempMap[item.day_index] = [];
+           tempMap[item.day_index].push(enriched);
+        });
+        setAssignmentsMap(tempMap);
+    } catch (err) {
+        console.error("Failed to load assignments:", err);
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadData(); }, [user]);
+
+  const handleOpen = (assignment: AssignmentWithStatus) => {
     setSelectedAssignment(assignment);
     setView('detail');
   };
 
-  const handleBack = () => {
+  const handleBack = async () => {
+    await loadData(); // Refresh data on back to show updated scores
     setSelectedAssignment(null);
     setView('calendar');
   };
 
-  return view === 'calendar' ? (
-    <CalendarView
-      user={user}
-      onSelect={handleOpenAssignment}
-    />
-  ) : (
-    <DetailView
-      user={user}
-      assignment={selectedAssignment!}
-      onBack={handleBack}
-      onComplete={(id, score) => {
-        onComplete?.(id, score);
-        handleBack();
-      }}
-    />
-  );
-};
+  // 2. RENDERER
+  if (loading) return <div className="p-10 text-center text-slate-500 animate-pulse">Loading Assignments...</div>;
 
-// ============================================================================
-// SUB-COMPONENT: Calendar View
-// ============================================================================
+  if (view === 'detail' && selectedAssignment) {
+      // --- ROUTER LOGIC ---
+      if (selectedAssignment.type === 'homework') {
+          return <HomeworkPanel user={user} assignment={selectedAssignment} onBack={handleBack} onComplete={onComplete} />;
+      } else {
+          return <ExercisePanel user={user} assignment={selectedAssignment} onBack={handleBack} />;
+      }
+  }
 
-const CalendarView: React.FC<{ user: StudentRecord; onSelect: (a: Assignment) => void }> = ({ user, onSelect }) => {
-  const days = Array.from({ length: 21 }, (_, i) => {
-    const d = new Date(COURSE_START_DATE);
-    d.setDate(d.getDate() + i);
-    return d;
-  });
-
-  const isGuest = user.role === 'guest';
+  // 3. CALENDAR VIEW
+  const totalCourseDays = 15;
+  const courseDays = Array.from({ length: totalCourseDays }, (_, i) => i);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       <header className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Assignments</h1>
-          <p className="text-slate-600">Weekly exercises and homework.</p>
+          <p className="text-slate-600">Complete daily exercises to unlock progress.</p>
         </div>
-        <div className="text-xs text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
-          Date: {CURRENT_DATE.toLocaleDateString()}
-        </div>
+        {user.role === 'guest' && (
+           <div className="flex items-center gap-2 bg-yellow-100 text-yellow-800 px-3 py-1.5 rounded-lg border border-yellow-200">
+               <Lock className="w-4 h-4" /> <span className="text-xs font-bold">Demo Access: Day 1 Only</span>
+           </div>
+        )}
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-5 lg:grid-cols-7 gap-4">
-        {days.map((day, idx) => {
-          const dateStr = day.toISOString().split('T')[0];
-          const assignments = ASSIGNMENTS_DB[dateStr] || [];
-          const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        {courseDays.map((dayIndex) => {
+          const weeksPassed = Math.floor(dayIndex / 5);
+          const date = new Date(COURSE_START_DATE);
+          date.setDate(date.getDate() + dayIndex + (weeksPassed * 2));
 
-          // Locking Logic
-          const unlockDate = new Date(day);
-          unlockDate.setHours(0, 0, 0, 0);
-          const today = new Date(CURRENT_DATE);
-          today.setHours(0, 0, 0, 0);
-
-          const isDateLocked = unlockDate > today;
-          const isGuestLocked = isGuest && idx > 0;
-          const isLocked = isDateLocked || isGuestLocked;
+          const dayAssignments = assignmentsMap[dayIndex] || [];
+          // Lock the whole box if it's guest mode > day 1 OR all assignments inside are locked
+          const isBoxLocked = (user.role === 'guest' && dayIndex > 0) ||
+                              (dayAssignments.length > 0 && dayAssignments.every(a => a.is_locked));
 
           return (
-            <div key={idx} className={`min-h-[120px] rounded-xl border p-3 flex flex-col ${isWeekend ? 'bg-slate-50 border-slate-100' : 'bg-white border-slate-200'}`}>
-              <div className="text-xs font-bold text-slate-500 mb-2">
-                {day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} <br />
-                {day.toLocaleDateString('en-US', { weekday: 'short' })}
+            <div key={dayIndex} className={`min-h-[140px] rounded-xl border p-3 flex flex-col transition-all hover:shadow-sm ${isBoxLocked ? 'bg-slate-50 border-slate-100' : 'bg-white border-slate-200'}`}>
+              <div className="flex justify-between items-start mb-3">
+                 <div className="text-xs font-bold text-slate-500">
+                    <span className="text-slate-400 font-normal">Day {dayIndex + 1}</span> <br/>
+                    {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                 </div>
+                 {isBoxLocked && <Lock className="w-4 h-4 text-slate-300" />}
               </div>
 
               <div className="space-y-2 flex-1">
-                {assignments.map(assign => {
-                  const completed = user.assignmentScores?.[assign.id] !== undefined;
-                  const isHomework = assign.type === 'homework';
+                 {dayAssignments.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-xs text-slate-300 italic">No content</div>
+                 ) : (
+                    dayAssignments.map(assign => {
+                       const isDone = assign.user_status === 'submitted';
+                       const isHW = assign.type === 'homework';
 
-                  return (
-                    <button
-                      key={assign.id}
-                      disabled={isLocked}
-                      onClick={() => !isLocked && onSelect(assign)}
-                      className={`w-full text-left text-xs p-2 rounded border flex items-center justify-between group transition-all
-                        ${completed
-                          ? (isHomework ? 'bg-purple-100 border-purple-300 text-purple-800' : 'bg-blue-100 border-blue-300 text-blue-800')
-                          : (isHomework ? 'border-purple-200 bg-purple-50 text-purple-700' : 'border-blue-200 bg-blue-50 text-blue-700')
-                        }
-                        ${isLocked ? 'opacity-50 cursor-not-allowed grayscale' : 'hover:shadow-md'}
-                      `}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <span className="font-semibold truncate flex items-center">
-                          {completed && <Check className="w-3 h-3 mr-1" />}
-                          {isHomework ? 'HW' : 'EX'}
-                        </span>
-                        {isGuestLocked && (
-                          <span className="text-[9px] uppercase tracking-wide opacity-70 block mt-0.5">Full Course Only</span>
-                        )}
-                      </div>
-                      {isLocked ?
-                        <Lock className="w-3 h-3 flex-shrink-0 ml-1" /> :
-                        <Play className="w-3 h-3 opacity-0 group-hover:opacity-100 flex-shrink-0 ml-1" />
-                      }
-                    </button>
-                  );
-                })}
+                       let btnClass = "w-full text-left text-xs p-2 rounded border flex items-center justify-between transition-all ";
+                       if (assign.is_locked) {
+                           btnClass += "opacity-50 cursor-not-allowed bg-slate-100 text-slate-400 border-slate-200";
+                       } else if (isDone) {
+                           btnClass += isHW ? "bg-purple-100 border-purple-200 text-purple-800" : "bg-green-100 border-green-200 text-green-800 font-medium";
+                       } else {
+                           btnClass += isHW ? "bg-purple-50 border-purple-100 text-purple-700 hover:border-purple-300" : "bg-white border-blue-200 text-blue-700 hover:border-blue-400 shadow-sm";
+                       }
+
+                       return (
+                         <button key={assign.id} disabled={assign.is_locked} onClick={() => handleOpen(assign)} className={btnClass}>
+                             <span className="truncate flex items-center">
+                                {isDone ? <Check className="w-3 h-3 mr-1.5" /> : null}
+                                {isHW ? 'HW' : 'EX'}
+                             </span>
+                             {!assign.is_locked && !isDone && <Play className="w-3 h-3 opacity-50" />}
+                             {isDone && isHW && <span className="ml-1 text-[10px] bg-white px-1.5 rounded border shadow-sm">{assign.user_score}%</span>}
+                         </button>
+                       );
+                    })
+                 )}
               </div>
             </div>
           );
         })}
       </div>
-    </div>
-  );
-};
-
-// ============================================================================
-// SUB-COMPONENT: Detail View (The Assignment Runner)
-// ============================================================================
-
-interface DetailViewProps {
-  user: StudentRecord;
-  assignment: Assignment;
-  onBack: () => void;
-  onComplete: (id: string, score: number) => void;
-}
-
-const DetailView: React.FC<DetailViewProps> = ({ user, assignment, onBack, onComplete }) => {
-  const [answers, setAnswers] = useState<Record<string, string>>(() => {
-    const initial: Record<string, string> = {};
-    assignment.questions.filter(q => q.type === 'code').forEach(q => initial[q.id] = q.content);
-    return initial;
-  });
-
-  const [execResults, setExecResults] = useState<Record<string, { output: string; success: boolean }>>({});
-  const [preCheckResults, setPreCheckResults] = useState<Record<string, { passed: number; details: boolean[] }>>({});
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-
-  const isSubmitted = user.assignmentScores?.[assignment.id] !== undefined;
-  const earnedScore = user.assignmentScores?.[assignment.id] || 0;
-  const isHomework = assignment.type === 'homework';
-
-  // --- Logic Helpers ---
-
-  const handleCodeChange = (id: string, val: string) => {
-    setAnswers(prev => ({ ...prev, [id]: val }));
-  };
-
-  const runCell = (cell: NotebookCell) => {
-    const code = answers[cell.id] || "";
-    const expected = cell.expectedOutput || "";
-    const success = code.includes(expected) || code.includes("print");
-    const output = success ? expected : "SyntaxError: Unexpected token...";
-    setExecResults(prev => ({ ...prev, [cell.id]: { output, success } }));
-  };
-
-  const runPreCheck = () => {
-    const results: Record<string, any> = {};
-    assignment.questions.forEach(q => {
-      if (q.type === 'code' && q.testCases) {
-        const code = answers[q.id];
-        const checks = q.testCases.map(() => code && code.includes("return"));
-        results[q.id] = { passed: checks.filter(Boolean).length, details: checks };
-      }
-    });
-    setPreCheckResults(results);
-  };
-
-  const isExerciseComplete = () => {
-    const codeCells = assignment.questions.filter(q => q.type === 'code');
-    return codeCells.every(cell => execResults[cell.id]?.success);
-  };
-
-  const handleSaveExercise = () => {
-    alert("Exercise Saved and Completed!");
-    onComplete(assignment.id, 100);
-  };
-
-  const handleSubmitHomework = () => {
-    onComplete(assignment.id, assignment.maxScore);
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <header className="flex items-center gap-4 border-b border-slate-200 pb-4 sticky top-0 bg-slate-50 z-10 pt-2">
-        <Button variant="ghost" onClick={onBack}>
-          <ChevronLeft className="mr-2 h-4 w-4" /> Back
-        </Button>
-        <div>
-          <div className="flex items-center gap-2">
-            <span className={`text-xs px-2 py-0.5 rounded font-bold uppercase ${isHomework ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-              {assignment.type}
-            </span>
-            <h1 className="text-xl font-bold text-slate-900">{assignment.title}</h1>
-          </div>
-          <p className="text-sm text-slate-600 mt-1">
-            {isHomework ? `Max Score: ${assignment.maxScore}` : 'Practice Mode (No Submission)'}
-          </p>
-        </div>
-        <div className="ml-auto">
-          {isSubmitted ? (
-            <div className="bg-green-100 text-green-800 px-4 py-2 rounded-lg font-bold flex items-center border border-green-200">
-              <CheckCircle className="w-5 h-5 mr-2" /> Review Mode: {earnedScore}/{assignment.maxScore || 100}
-            </div>
-          ) : isHomework ? (
-            <div className="flex gap-2">
-              <Button variant="secondary" onClick={runPreCheck}><CheckCircle className="mr-2 h-4 w-4" /> Pre-Check</Button>
-              <Button variant="primary" onClick={() => setShowConfirmModal(true)}><Save className="mr-2 h-4 w-4" /> Submit</Button>
-            </div>
-          ) : (
-            <Button variant={isExerciseComplete() ? 'primary' : 'outline'} onClick={handleSaveExercise} disabled={!isExerciseComplete()}>
-              <CheckCircle className="mr-2 h-4 w-4" /> {isExerciseComplete() ? 'Save & Complete' : 'Complete All Tasks'}
-            </Button>
-          )}
-        </div>
-      </header>
-
-      {/* Content */}
-      <div className="max-w-4xl mx-auto space-y-8 pb-20">
-        <div className="p-4 bg-white border border-slate-200 rounded-lg text-sm shadow-sm">
-          <h3 className="font-bold mb-1">Instructions</h3>
-          <p className="text-slate-600">{assignment.description}</p>
-        </div>
-
-        {assignment.questions.map((cell, idx) => (
-          <div key={cell.id} className="flex gap-2">
-            <div className="w-12 text-right font-mono text-xs text-slate-400 pt-3 select-none">[{idx + 1}]</div>
-            <div className="flex-1 space-y-3">
-              {cell.type === 'markdown' ? (
-                <div className="prose prose-sm max-w-none p-4 bg-transparent border-l-4 border-blue-200 pl-4">
-                  <pre className="whitespace-pre-wrap font-sans text-slate-800">{cell.content}</pre>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="border border-slate-300 rounded-lg overflow-hidden shadow-sm focus-within:ring-2 ring-blue-500/50 bg-white">
-                    <div className="bg-slate-50 px-3 py-1 border-b border-slate-200 flex justify-between items-center">
-                      <span className="text-xs text-slate-500 font-mono">input</span>
-                      {!isHomework && !isSubmitted && (
-                        <button onClick={() => runCell(cell)} className="text-xs flex items-center text-blue-600 hover:text-blue-800 font-medium">
-                          <Play className="w-3 h-3 mr-1" /> Run
-                        </button>
-                      )}
-                    </div>
-                    {isSubmitted ? (
-                      <div className="bg-slate-50 p-3 font-mono text-sm text-slate-600">
-                        <pre>{answers[cell.id] || '# No code submitted'}</pre>
-                      </div>
-                    ) : (
-                      <textarea
-                        className="w-full bg-slate-50 font-mono text-sm p-3 min-h-[120px] resize-y focus:outline-none text-slate-800"
-                        value={answers[cell.id] || ''}
-                        onChange={(e) => handleCodeChange(cell.id, e.target.value)}
-                        spellCheck={false}
-                      />
-                    )}
-                  </div>
-
-                  {/* Output & Feedback Section */}
-                  {!isHomework && execResults[cell.id] && (
-                    <div className={`p-3 rounded text-sm font-mono border ${execResults[cell.id].success ? 'bg-white border-green-200 text-green-700' : 'bg-white border-red-200 text-red-700'}`}>
-                      <div className="text-xs font-bold text-slate-400 mb-1">OUTPUT</div>
-                      {execResults[cell.id].output}
-                    </div>
-                  )}
-
-                  {isHomework && (isSubmitted || preCheckResults[cell.id]) && (
-                    <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
-                      <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">Auto-Grader Report</h4>
-                      <div className="space-y-2">
-                        {(cell.testCases || []).map((tc, i) => {
-                          let status = 'pending';
-                          if (isSubmitted) status = earnedScore >= 100 || i < 5 ? 'pass' : 'fail';
-                          else if (preCheckResults[cell.id]) status = preCheckResults[cell.id].details[i] ? 'pass' : 'fail';
-
-                          return (
-                            <div key={i} className="flex items-center text-xs font-mono bg-white p-2 rounded border border-slate-100">
-                               <div className={`w-4 h-4 rounded-full mr-3 flex items-center justify-center ${status === 'pass' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
-                                 {status === 'pass' ? <Check className="w-3 h-3"/> : <XCircle className="w-3 h-3"/>}
-                               </div>
-                               <span className="text-slate-600 flex-1">Test Case #{i+1}</span>
-                               <span className="font-bold text-slate-400 capitalize">{status}</span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {showConfirmModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 text-center space-y-4">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-yellow-100">
-                 <AlertTriangle className="h-6 w-6 text-yellow-600" />
-              </div>
-              <h3 className="text-lg font-bold text-slate-900">Confirm Submission?</h3>
-              <p className="text-sm text-slate-600">This submission is final and will be graded immediately.</p>
-              <div className="flex gap-3 pt-2">
-                 <Button variant="outline" fullWidth onClick={() => setShowConfirmModal(false)}>Cancel</Button>
-                 <Button variant="primary" fullWidth onClick={handleSubmitHomework}>Confirm</Button>
-              </div>
-           </div>
-        </div>
-      )}
     </div>
   );
 };

@@ -8,7 +8,7 @@ import { COURSE_WEEKS } from '../../data/mockData';
 import Button from '../../components/Button';
 import Input from '../../components/Input';
 import { supabase } from '../../data/supabaseClient';
-import { Search, Edit2, Users, Bell, Activity, Globe, X, RefreshCw, Upload } from 'lucide-react';
+import { Search, Edit2, Users, Bell, Activity, Globe, X, RefreshCw, Upload, AlertTriangle } from 'lucide-react';
 
 interface AdminPanelProps {
   announcements: Announcement[];
@@ -45,7 +45,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // --- Fetchers ---
   const fetchLogs = async () => {
-    const { data } = await supabase.from('access_logs').select('*').order('login_time', { ascending: false });
+    const { data } = await supabase.from('access_logs').select('*').order('login_time', { ascending: false }).limit(50);
     if (data) setLogs(data as AccessLog[]);
   };
 
@@ -63,18 +63,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleModalSave = async () => {
     if (!editingStudent) return;
 
-    // Optimistic Update
+    // 1. Optimistic UI Update (Instant feedback)
     const updatedList = students.map(s => s.id === editingStudent.id ? editingStudent : s);
     onUpdateStudents(updatedList);
 
-    await supabase.from('users').update({
+    // 2. Update Database Roster (public.users)
+    // Note: This updates the "Text Record". It does NOT update Supabase Auth vault for security reasons.
+    const { error } = await supabase.from('users').update({
         name: editingStudent.name,
         email: editingStudent.email,
         role: editingStudent.role,
-        password: editingStudent.password,
+        password: editingStudent.password, // Updates the "Roster" password
         profession: editingStudent.profession,
         notes: editingStudent.notes
     }).eq('id', editingStudent.id);
+
+    if (error) {
+        alert("Error updating database: " + error.message);
+        return;
+    }
 
     setIsModalOpen(false);
     setEditingStudent(null);
@@ -88,12 +95,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         is_active: true
     }).select().single();
 
-    if (data) window.location.reload();
+    if (data) {
+        onAddAnnouncement(data as Announcement); // Update parent state without reload
+        setNewAnnTitle('');
+        setNewAnnMsg('');
+    }
   };
 
   const toggleAnnouncement = async (id: string, currentState: boolean) => {
     await supabase.from('announcements').update({ is_active: !currentState }).eq('id', id);
-    window.location.reload();
+    // Simple state refresh for prototype
+    const updated = dbAnnouncements.map(a => a.id === id ? { ...a, is_active: !currentState } : a);
+    setDbAnnouncements(updated);
   };
 
   const handleScoreUpdate = async (studentId: string, field: string, value: string) => {
@@ -117,7 +130,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
      await supabase.from('users').update(dbUpdate).eq('id', studentId);
   };
 
-  // --- NEW: File Upload Handler ---
+  // --- File Upload Handler ---
   const handleFileUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) return;
@@ -127,7 +140,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       // 1. Upload to Supabase Storage
       const fileExt = file.name.split('.').pop();
-      // Create a unique file path to prevent overwrites
       const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
 
       const { error: uploadError } = await supabase.storage
@@ -141,12 +153,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         .from('course-materials')
         .getPublicUrl(fileName);
 
-      // 3. Save Metadata to DB (Linking to Week/Day)
+      // 3. Save Metadata to DB
       const selectedWeek = COURSE_WEEKS.find(w => w.days.some(d => d.id === selectedDay));
 
       const { error: dbError } = await supabase.from('materials').insert({
         title: file.name,
-        type: fileExt === 'csv' ? 'csv' : 'pdf', // Simple auto-detect fallback
+        type: fileExt === 'csv' ? 'csv' : 'pdf',
         url: publicUrl,
         week_id: selectedWeek?.id,
         day_id: selectedDay
@@ -313,7 +325,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* 3. MATERIALS UPLOAD TAB (NEW) */}
+      {/* 3. MATERIALS UPLOAD TAB */}
       {activeTab === 'materials' && (
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm max-w-lg">
           <h3 className="font-bold mb-4 flex items-center gap-2">
@@ -395,14 +407,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             <p className="text-sm text-slate-600 mt-1">{ann.message}</p>
                             <div className="text-xs text-slate-400 mt-2">{new Date(ann.date || Date.now()).toLocaleDateString()}</div>
                         </div>
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => toggleAnnouncement(ann.id, !!ann.is_active)}
-                                className={`text-xs px-3 py-1 rounded border ${ann.is_active ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-green-200 text-green-600 hover:bg-green-50'}`}
-                            >
-                                {ann.is_active ? 'Deactivate' : 'Activate'}
-                            </button>
-                        </div>
+                        <button
+                            onClick={() => toggleAnnouncement(ann.id, !!ann.is_active)}
+                            className={`text-xs px-3 py-1 rounded border ${ann.is_active ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-green-200 text-green-600 hover:bg-green-50'}`}
+                        >
+                            {ann.is_active ? 'Deactivate' : 'Activate'}
+                        </button>
                     </div>
                 ))}
             </div>
@@ -469,7 +479,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </select>
                     </div>
 
-                    <Input label="Password" value={editingStudent.password || ''} onChange={e => setEditingStudent({...editingStudent, password: e.target.value})} />
+                    {/* PASSWORD FIELD WITH WARNING */}
+                    <div>
+                        <Input
+                            label="Password"
+                            value={editingStudent.password || ''}
+                            onChange={e => setEditingStudent({...editingStudent, password: e.target.value})}
+                        />
+                        <div className="mt-2 flex items-start gap-2 p-2 bg-orange-50 border border-orange-100 rounded text-xs text-orange-700">
+                            <AlertTriangle className="w-4 h-4 shrink-0" />
+                            <p>
+                                <strong>Important:</strong> Changing the password here only updates the database record.
+                                To allow the student to log in with this new password, you must <strong>Delete</strong> their account from the Supabase Auth Dashboard to trigger a re-registration.
+                            </p>
+                        </div>
+                    </div>
 
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">Profession / Bio</label>

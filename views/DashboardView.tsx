@@ -81,18 +81,38 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     onUpdateUser(updatedUser);
   };
 
-  const handleChangePassword = (e: React.FormEvent) => {
+  // --- UPDATED PASSWORD HANDLER ---
+  const handleChangePassword = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!newPassword || !onUpdateUser) return;
 
-      const updatedUser = { ...user, password: newPassword };
-      onUpdateUser(updatedUser);
-      setPasswordSuccess('Password updated successfully!');
-      setNewPassword('');
-      setTimeout(() => {
-          setIsSettingsOpen(false);
-          setPasswordSuccess('');
-      }, 1500);
+      try {
+          // 1. Update Real Supabase Auth (The Key Validation)
+          // This ensures the next login actually works with the new password
+          const { error } = await supabase.auth.updateUser({
+              password: newPassword
+          });
+
+          if (error) throw error;
+
+          // 2. Update Local Roster / Public Table
+          // We keep this sync so your "Class Roster" view stays consistent
+          const updatedUser = { ...user, password: newPassword };
+          onUpdateUser(updatedUser);
+
+          setPasswordSuccess('Password updated successfully!');
+          setNewPassword('');
+
+          setTimeout(() => {
+              setIsSettingsOpen(false);
+              setPasswordSuccess('');
+          }, 1500);
+
+      } catch (err: any) {
+          console.error("Password Update Failed:", err);
+          // You might want to show this error in the UI, but for minimum change:
+          alert(`Failed to update password: ${err.message}`);
+      }
   };
 
   // Nav Items Configuration
@@ -100,11 +120,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     { id: DashboardViewType.HOME, label: 'My Dashboard', icon: Home },
     { id: DashboardViewType.MATERIALS, label: 'Course Material', icon: BookOpen },
     { id: DashboardViewType.PRACTICE, label: 'Practice Arena', icon: Code },
+    { id: DashboardViewType.ASSIGNMENTS, label: 'EXs & HWs', icon: Calendar }
   ];
-
-  if (user.role !== 'guest') {
-    navItems.push({ id: DashboardViewType.ASSIGNMENTS, label: 'Exercise & HW', icon: Calendar });
-  }
 
   if (user.role === 'admin') {
     navItems.push({ id: DashboardViewType.ADMIN, label: 'Admin Tools', icon: Shield });
@@ -121,13 +138,16 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       case DashboardViewType.PRACTICE:
         return <PracticePanel user={user}/>;
       case DashboardViewType.ASSIGNMENTS:
-        return user.role !== 'guest' ? (
-             <AssignmentsPanel user={user as StudentRecord} onComplete={handleAssignmentComplete} />
-        ) : <div>Access Denied</div>;
+        return (
+              <AssignmentsPanel
+                user={user as StudentRecord}
+                onComplete={handleAssignmentComplete}
+              />
+        );
       case DashboardViewType.ADMIN:
         return user.role === 'admin' ? (
           <AdminPanel
-             announcements={announcements} // Admin sees ALL (including drafts)
+             announcements={announcements}
              onAddAnnouncement={handleAddAnnouncement}
              onDeleteAnnouncement={handleDeleteAnnouncement}
              students={students}
@@ -197,7 +217,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                      </div>
                  )}
               </div>
-              <button 
+              <button
                 onClick={onLogout}
                 className="flex w-full items-center justify-center rounded-lg border border-slate-600 bg-transparent px-2 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
               >
@@ -225,10 +245,10 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
                 <div className="p-6">
                     <form onSubmit={handleChangePassword} className="space-y-4">
-                        <Input 
+                        <Input
                             label="New Password"
                             type="password"
-                            placeholder="Enter new password"
+                            placeholder="Enter new password (min 6 chars)"
                             value={newPassword}
                             onChange={e => setNewPassword(e.target.value)}
                             icon={<Lock className="h-5 w-5" />}
@@ -238,7 +258,9 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                                 <CheckCircle className="w-4 h-4 mr-2" /> {passwordSuccess}
                             </div>
                         )}
-                        <Button type="submit" fullWidth disabled={!newPassword}>Update Password</Button>
+                        <Button type="submit" fullWidth disabled={!newPassword || newPassword.length < 6}>
+                           Update Password
+                        </Button>
                     </form>
                 </div>
              </div>
