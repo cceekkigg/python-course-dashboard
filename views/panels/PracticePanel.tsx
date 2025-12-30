@@ -131,7 +131,7 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
   // [FIX] 3. Fetch progress strictly for this userId
   const fetchUserData = async (userId: string) => {
       const { data } = await supabase
-        .from('user_progress')
+        .from('user_practice_progress')
         .select('*')
         .eq('user_id', userId) // <--- STRICT FILTER
         .maybeSingle();
@@ -282,7 +282,7 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
     };
 
     setUserProgress(updatedProgress as UserProgress);
-    await supabase.from('user_progress').upsert(updatedProgress);
+    await supabase.from('user_practice_progress').upsert(updatedProgress);
   };
 
   const checkRewardMilestones = (oldScore: number, newScore: number) => {

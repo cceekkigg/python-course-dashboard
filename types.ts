@@ -10,41 +10,29 @@ export interface User {
   email: string;
   avatarUrl?: string;
   role: Role;
-  password?: string; // For demo/admin purposes
+  password?: string; // Kept for legacy/demo reasons
 }
 
 export interface StudentRecord extends User {
-  attendance: number; // Percentage or Count depending on usage (0-15)
-  assignmentScores: Record<string, number>; // assignmentId -> score
+  attendance: number;
+  assignmentScores: Record<string, number>;
   profession?: string;
   notes?: string;
-}
-
-export interface Material {
-  id: string;
-  title: string;
-  type: 'pdf' | 'csv' | 'slides' | 'link';
-  url: string;
 }
 
 export interface CourseDay {
   id: string;
   title: string;
-  materials: Material[];
+  day_index: number;
 }
 
 export interface CourseWeek {
   id: string;
-  weekNumber: number;
+  week_number: number;
   title: string;
   description: string;
-  days: CourseDay[];
-  isLocked: boolean;
-}
-
-export interface TestCase {
-  input: string;
-  expected: string;
+  is_locked: boolean;
+  days: CourseDay[]; // Nested days from DB join
 }
 
 export interface Assignment {
@@ -64,17 +52,6 @@ export interface NotebookCell {
   hint?: string;
   expectedOutput?: string;
   testCases?: TestCase[];
-}
-
-export interface PracticeQuestion {
-  id: string;
-  topicId: string;
-  points: number;
-  question: string;
-  starterCode: string;
-  solution: string;
-  expectedOutput: string;
-  difficulty: 'easy' | 'medium' | 'hard';
 }
 
 export interface Announcement {
@@ -137,7 +114,8 @@ export interface AssignmentContent {
   title: string;
   description: string;
   max_score: number;
-  questions: NotebookCell[];
+  questions: any[];
+  is_locked?: boolean;
 }
 
 export interface UserAssignmentProgress {
@@ -151,6 +129,12 @@ export interface AssignmentUI extends AssignmentContent {
   user_status?: 'in_progress' | 'submitted';
   user_score?: number;
   is_locked?: boolean;
+}
+
+export interface AppSettings {
+  course_name: string;
+  course_start_date: string;
+  course_end_date: string;
 }
 
 export enum DashboardViewType {

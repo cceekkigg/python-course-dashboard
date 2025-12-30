@@ -139,7 +139,7 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
   const updateGlobalProgress = async (addedScore: number) => {
     // 1. Fetch current progress
     const { data: currentProgress } = await supabase
-        .from('user_progress')
+        .from('user_practice_progress')
         .select('*')
         .eq('user_id', user.id)
         .maybeSingle();
@@ -147,7 +147,7 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
     if (currentProgress) {
         // 2. Add to existing
         await supabase
-            .from('user_progress')
+            .from('user_practice_progress')
             .update({
                 total_score: (currentProgress.total_score || 0) + addedScore,
                 total_count: (currentProgress.total_count || 0) + 1
@@ -156,7 +156,7 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
     } else {
         // 3. Create new if missing
         await supabase
-            .from('user_progress')
+            .from('user_practice_progress')
             .insert({
                 user_id: user.id,
                 total_score: addedScore,
