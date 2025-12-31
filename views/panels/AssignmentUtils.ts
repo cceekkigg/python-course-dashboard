@@ -17,24 +17,23 @@ export interface TestCase {
 }
 
 // --- CONSTANTS ---
-// We lock to 0.24.1 to prevent LinkErrors and 404s on repodata.json
-const PYODIDE_VERSION = "0.24.1";
+// UPDATED: Sync version with PracticePanel to prevent LinkError/Wasm mismatch
+const PYODIDE_VERSION = "0.25.0";
 const PYODIDE_BASE_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 
 export const INPUT_OVERRIDE_CODE = `
 import sys
 import js
 
-# Custom Input Handler
+# Custom Input Handler using Browser Prompt
 def input(prompt=""):
-    if hasattr(sys, 'inputs') and len(sys.inputs) > 0:
-        val = sys.inputs.pop(0)
-        print(f"{prompt}{val}")
-        return str(val)
-    return ""
+    val = js.prompt(prompt)
+    if val is None:
+        return ""
+    print(f"{prompt}{val}")
+    return str(val)
 
 sys.modules['builtins'].input = input
-sys.inputs = []
 `;
 
 // --- UTILS ---
@@ -54,12 +53,9 @@ const applyStoragePatch = () => {
     clear: () => {},
     key: () => null
   };
-
   try {
-    // Try accessing to see if it throws
     const x = window.sessionStorage;
   } catch (e) {
-    // If access fails, define properties with the mock
     try {
         Object.defineProperty(window, 'sessionStorage', { value: mockStorage, configurable: true, writable: true });
         Object.defineProperty(window, 'localStorage', { value: mockStorage, configurable: true, writable: true });
@@ -108,11 +104,10 @@ export const usePyodide = () => {
         // 3. Initialize with Explicit URL
         if ((window as any).loadPyodide) {
           const py = await (window as any).loadPyodide({
-             indexURL: PYODIDE_BASE_URL, // <--- CRITICAL FIX for LinkError/404
+             indexURL: PYODIDE_BASE_URL,
              stdout: (msg: string) => console.log("[Python]", msg),
              stderr: (msg: string) => console.error("[Python]", msg)
           });
-
           (window as any).pyodide = py; // Cache globally
           setPyodide(py);
           setIsReady(true);

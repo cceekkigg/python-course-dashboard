@@ -6,29 +6,48 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../data/supabaseClient';
 import { PracticeQuestion, UserProgress, User } from '../../types';
 import Button from '../../components/Button';
-import { Play, CheckCircle, RefreshCw, AlertCircle, ArrowRight, Terminal, Lock, Unlock, Clock, Zap, Loader2, Trophy, Award, Medal, Timer, XCircle } from 'lucide-react';
+import { Play, CheckCircle, RefreshCw, AlertCircle, ArrowRight, Terminal, Lock, Unlock, Clock, Zap, Loader2, Trophy, Award, Medal, Timer, XCircle, Pause } from 'lucide-react';
 
 // Global Pyodide Type
 declare global {
   interface Window {
     loadPyodide: any;
-    _input_queue: any[];
   }
 }
 
 // ----------------------------------------------------------------------
-// SYSTEM PROMPT: Python Shim for Input Mocking (Silent Version)
+// CONFIGURATION: Time Limits & Execution Shim
 // ----------------------------------------------------------------------
-const INPUT_OVERRIDE_CODE = `
+
+const DIFFICULTY_TIME_LIMITS: Record<string, number> = {
+  'very_easy': 1 * 60,
+  'easy': 3 * 60,
+  'medium': 5 * 60,
+  'hard': 7 * 60,
+  'challenge': 10 * 60
+};
+
+const PYTHON_PREAMBLE = `
+import sys
+
+# Reset buffer
+class Capture(list):
+    def __enter__(self):
+        self._stdout = sys.stdout
+        sys.stdout = self._stringio = io.StringIO()
+        return self
+    def __exit__(self, *args):
+        self.extend(self._stringio.getvalue().splitlines())
+        del self._stringio    # free up some memory
+        sys.stdout = self._stdout
+
+# Input Mock
 def input(prompt=""):
-    # 'sys_inputs' is injected as a global list before running
     if 'sys_inputs' in globals() and len(sys_inputs) > 0:
-        val = sys_inputs.pop(0)
-        return str(val)
+        return str(sys_inputs.pop(0))
     return ""
 `;
 
-// [FIX] 1. Define Props to accept the current User
 interface PracticePanelProps {
   user: User;
 }
@@ -57,15 +76,19 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [isTimedOut, setIsTimedOut] = useState(false);
 
+  // [NEW] Pause State
+  const [isPaused, setIsPaused] = useState(false);
+
   // Engine State
   const [isEngineReady, setIsEngineReady] = useState(false);
   const [engineStatus, setEngineStatus] = useState("Loading Engine...");
   const pyodideRef = useRef<any>(null);
+  const lineNumRef = useRef<HTMLDivElement>(null);
 
   // --- 1. Initialization ---
   useEffect(() => {
     const init = async () => {
-      // A. Storage Patch
+      // Storage Patch
       try { const check = window.sessionStorage; } catch (e) {
         const mockStorage = { length: 0, getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null };
         try {
@@ -74,7 +97,7 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
         } catch (err) {}
       }
 
-      // B. Load Pyodide
+      // Load Pyodide
       if (!window.loadPyodide) {
          setEngineStatus("Downloading Python...");
          await new Promise<void>((resolve, reject) => {
@@ -86,30 +109,34 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
          });
       }
 
-      // C. Init Engine
+      // Init Engine
       try {
         if (!pyodideRef.current) {
           setEngineStatus("Initializing Python...");
           const pyodide = await window.loadPyodide();
           pyodideRef.current = pyodide;
+          await pyodide.runPythonAsync(`import io\nimport sys\n${PYTHON_PREAMBLE}`);
           setIsEngineReady(true);
         }
       } catch (err: any) {
         setFeedback({ status: 'error', msg: `Engine Failure: ${err.message}` });
       }
 
-      // [FIX] 2. Pass user.id to fetchUserData
       await fetchUserData(user.id);
       await fetchTopics();
       fetchRandomQuestion('all');
     };
 
     init();
-  }, [user.id]); // Re-run if user changes
+  }, [user.id]);
 
-  // --- Timer Logic ---
+  // --- Timer Logic (Updated for Pause) ---
   useEffect(() => {
     if (timeLeft === null) return;
+
+    // [UPDATE] Check if paused
+    if (isPaused) return;
+
     if (timeLeft <= 0) {
         setIsTimedOut(true);
         return;
@@ -118,7 +145,7 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
         setTimeLeft(prev => (prev !== null && prev > 0) ? prev - 1 : 0);
     }, 1000);
     return () => clearInterval(timerId);
-  }, [timeLeft]);
+  }, [timeLeft, isPaused]); // Added isPaused dependency
 
   const formatTime = (sec: number) => {
       const m = Math.floor(sec / 60);
@@ -127,19 +154,16 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
   };
 
   // --- Data Fetching ---
-
-  // [FIX] 3. Fetch progress strictly for this userId
   const fetchUserData = async (userId: string) => {
       const { data } = await supabase
         .from('user_practice_progress')
         .select('*')
-        .eq('user_id', userId) // <--- STRICT FILTER
+        .eq('user_id', userId)
         .maybeSingle();
 
       if (data) {
           setUserProgress(data as UserProgress);
       } else {
-          // Initialize empty local state for new user
           setUserProgress({
               user_id: userId,
               total_score: 0,
@@ -154,7 +178,7 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
   const fetchTopics = async () => {
       const { data } = await supabase.from('practice_questions').select('topic');
       if (data) {
-          const unique = Array.from(new Set(data.map(d => d.topic)));
+          const unique = Array.from(new Set(data.map(d => d.topic))).sort();
           setTopics(unique);
       }
   };
@@ -166,6 +190,7 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
       setShowSolution(false);
       setAttempts(0);
       setIsTimedOut(false);
+      setIsPaused(false); // [UPDATE] Reset pause state
       setTimeLeft(null);
 
       let query = supabase.from('practice_questions').select('*', { count: 'exact', head: true });
@@ -187,18 +212,18 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
       if (data && data.length > 0) {
           const question = data[0] as PracticeQuestion;
           setCurrentQ(question);
-          setCode(question.starter_code);
 
-          if (question.difficulty === 'challenge') {
-              setTimeLeft(300);
-          }
+          setCode(question.starter_code + '\n');
+
+          const timeLimit = DIFFICULTY_TIME_LIMITS[question.difficulty] || 300;
+          setTimeLeft(timeLimit);
       }
       setIsLoadingQ(false);
   };
 
   // --- Execution Logic ---
   const runCode = async () => {
-    if (!isEngineReady || !currentQ || isTimedOut) return;
+    if (!isEngineReady || !currentQ || isTimedOut || isPaused) return;
 
     setFeedback({ status: 'idle', msg: 'Running tests...' });
     setAttempts(p => p + 1);
@@ -213,7 +238,7 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
          pyodideRef.current.setStdout({ batched: (msg: string) => outputBuffer.push(msg) });
 
          const inputsDefinition = `sys_inputs = ${JSON.stringify(testCase.inputs)}`;
-         const fullScript = `${inputsDefinition}\n${INPUT_OVERRIDE_CODE}\n${code}`;
+         const fullScript = `${PYTHON_PREAMBLE}\n${inputsDefinition}\n${code}`;
 
          await pyodideRef.current.runPythonAsync(fullScript);
 
@@ -235,7 +260,7 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
          setFeedback({
              status: 'success',
              msg: `Success! (+${currentQ.score_value} XP)`,
-             output: "Great job! Code works efficiently.",
+             output: "All test cases passed! Great work.",
              runtime
          });
          setTimeLeft(null);
@@ -255,7 +280,6 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
   };
 
   const handleSuccess = async (runtime: number) => {
-    // [FIX] 4. Use 'user.id' from props, do not fetch 'any' user from DB
     if (!currentQ || !userProgress) return;
     if (userProgress.solved_ids.includes(currentQ.id)) return;
 
@@ -273,7 +297,7 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
     checkRewardMilestones(userProgress.total_score, newTotalScore);
 
     const updatedProgress = {
-        user_id: user.id, // <--- DIRECT LINK TO LOGGED-IN USER
+        user_id: user.id,
         total_score: newTotalScore,
         total_count: newTotalCount,
         level_counts: newLevelCounts,
@@ -301,16 +325,59 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
 
   const getDifficultyColor = (diff: string) => {
       switch (diff) {
-          case 'very_easy': return 'text-slate-600 bg-slate-100 border-slate-200';
-          case 'easy': return 'text-green-600 bg-green-50 border-green-200';
+          case 'very_easy': return 'text-green-600 bg-green-100 border-green-200';
+          case 'easy': return 'text-blue-600 bg-blue-50 border-blue-200';
           case 'medium': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
-          case 'hard': return 'text-red-600 bg-red-50 border-red-200';
-          case 'challenge': return 'text-purple-600 bg-purple-50 border-purple-200 animate-pulse';
+          case 'hard': return 'text-orange-600 bg-orange-50 border-orange-200';
+          case 'challenge': return 'text-red-600 bg-red-50 border-red-200 animate-pulse';
           default: return 'text-slate-600';
       }
   };
 
   const isSolved = currentQ && userProgress?.solved_ids.includes(currentQ.id);
+
+  const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    if (lineNumRef.current) {
+        lineNumRef.current.scrollTop = e.currentTarget.scrollTop;
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const { selectionStart, selectionEnd, value } = e.currentTarget;
+
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const newValue = value.substring(0, selectionStart) + "    " + value.substring(selectionEnd);
+        setCode(newValue);
+        setTimeout(() => {
+            if (e.target instanceof HTMLTextAreaElement) {
+                e.target.selectionStart = selectionStart + 4;
+                e.target.selectionEnd = selectionStart + 4;
+            }
+        }, 0);
+    }
+
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        const linesBefore = value.substring(0, selectionStart).split('\n');
+        const currentLine = linesBefore[linesBefore.length - 1];
+        const match = currentLine.match(/^(\s*)/);
+        let indent = match ? match[1] : "";
+
+        if (currentLine.trim().endsWith(':')) {
+            indent += "    ";
+        }
+
+        const newValue = value.substring(0, selectionStart) + "\n" + indent + value.substring(selectionEnd);
+        setCode(newValue);
+        setTimeout(() => {
+            if (e.target instanceof HTMLTextAreaElement) {
+                e.target.selectionStart = selectionStart + 1 + indent.length;
+                e.target.selectionEnd = selectionStart + 1 + indent.length;
+            }
+        }, 0);
+    }
+  };
 
   return (
     <div className="h-full flex flex-col gap-6 animate-fade-in relative">
@@ -329,13 +396,13 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
 
        {isTimedOut && (
            <div className="absolute inset-0 z-40 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center rounded-xl">
-               <div className="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm animate-bounce">
+               <div className="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm animate-fade-in">
                    <div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
                        <XCircle className="w-8 h-8 text-red-600" />
                    </div>
                    <h2 className="text-2xl font-bold text-slate-900 mb-2">Time's Up!</h2>
-                   <p className="text-slate-600 mb-6">You ran out of time for this Challenge. Try another task!</p>
-                   <Button onClick={() => fetchRandomQuestion('all')} fullWidth>
+                   <p className="text-slate-600 mb-6">You ran out of time for this task. Try another one!</p>
+                   <Button onClick={() => fetchRandomQuestion(selectedTopic)} fullWidth>
                        Roll New Question
                    </Button>
                </div>
@@ -363,12 +430,12 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
 
        <div className="flex gap-4">
         <select
-          className="rounded-lg border-slate-300 text-sm focus:ring-blue-500 min-w-[150px]"
+          className="rounded-lg border-slate-300 text-sm focus:ring-blue-500 min-w-[200px]"
           value={selectedTopic}
           onChange={(e) => { setSelectedTopic(e.target.value); fetchRandomQuestion(e.target.value); }}
         >
-          <option value="all">All Topics</option>
-          {topics.map(t => <option key={t} value={t}>{t}</option>)}
+          <option value="all">all topics</option>
+          {topics.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ').toLowerCase()}</option>)}
         </select>
 
         <Button
@@ -380,9 +447,32 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
           <RefreshCw className={`mr-2 h-4 w-4 ${isLoadingQ ? 'animate-spin' : ''}`} />
           {isLoadingQ ? 'Rolling...' : 'Roll New Task'}
         </Button>
+
+        {/* [NEW] Pause Button in Controls */}
+        <Button
+            variant="outline"
+            onClick={() => setIsPaused(true)}
+            size="sm"
+            disabled={isLoadingQ || !currentQ || isTimedOut}
+        >
+          <Pause className="mr-2 h-4 w-4" />
+          Pause
+        </Button>
       </div>
 
-       <div className="flex-1 grid lg:grid-cols-2 gap-6 min-h-[500px]">
+       <div className="flex-1 grid lg:grid-cols-2 gap-6 min-h-[500px] relative">
+
+          {/* [NEW] Pause Overlay - Freezes the grid area */}
+          {isPaused && (
+             <div className="absolute inset-0 z-30 bg-slate-100/60 backdrop-blur-sm flex items-center justify-center rounded-xl border border-slate-200">
+                 <div className="bg-white p-8 rounded-2xl shadow-xl text-center border border-slate-200">
+                     <h2 className="text-xl font-bold text-slate-900 mb-4">Practice Paused</h2>
+                     <Button onClick={() => setIsPaused(false)} size="lg">
+                         <Play className="w-4 h-4 mr-2" /> Resume
+                     </Button>
+                 </div>
+             </div>
+          )}
 
           {/* LEFT: Problem Description */}
           <div className="flex flex-col gap-4">
@@ -402,7 +492,7 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
                             </span>
                             <div className="flex gap-2">
                                 <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-bold uppercase">
-                                    {currentQ.topic}
+                                    {currentQ.topic.replace(/_/g, ' ')}
                                 </span>
                                 {isSolved && (
                                     <span className="flex items-center text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">
@@ -456,7 +546,7 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
           {/* RIGHT: Code Editor */}
           <div className="flex flex-col gap-3">
               <div className="flex-1 relative bg-slate-900 rounded-xl overflow-hidden border border-slate-700 flex flex-col">
-                  <div className="bg-slate-800 px-4 py-2 flex justify-between items-center border-b border-slate-700">
+                  <div className="bg-slate-800 px-4 py-2 flex justify-between items-center border-b border-slate-700 shrink-0">
                       <span className="text-xs font-mono text-slate-400">main.py</span>
                       <button
                         onClick={() => setShowSolution(!showSolution)}
@@ -469,17 +559,32 @@ export const PracticePanel: React.FC<PracticePanelProps> = ({ user }) => {
                   </div>
 
                   {showSolution && currentQ ? (
-                      <div className="flex-1 p-4 bg-slate-900/50 text-yellow-100/80 font-mono text-sm whitespace-pre">
+                      <div className="flex-1 p-4 bg-slate-900/50 text-yellow-100/80 font-mono text-sm whitespace-pre overflow-auto">
                           {currentQ.solution_code}
                       </div>
                   ) : (
-                      <textarea
-                        className="flex-1 w-full bg-transparent p-4 font-mono text-sm text-slate-200 resize-none focus:outline-none"
-                        value={code}
-                        onChange={e => setCode(e.target.value)}
-                        spellCheck={false}
-                        disabled={!currentQ || isTimedOut}
-                      />
+                      <div className="flex-1 relative flex overflow-hidden">
+                          {/* Line Numbers Column */}
+                          <div
+                              ref={lineNumRef}
+                              className="bg-slate-900 text-slate-600 text-right py-4 pr-3 pl-2 font-mono text-sm border-r border-slate-800 select-none overflow-hidden leading-6 w-12 shrink-0"
+                          >
+                              {code.split('\n').map((_, i) => (
+                                  <div key={i}>{i + 1}</div>
+                              ))}
+                          </div>
+
+                          {/* Text Area with Events */}
+                          <textarea
+                            className="flex-1 w-full bg-transparent p-4 font-mono text-sm text-slate-200 resize-none focus:outline-none leading-6 whitespace-pre"
+                            value={code}
+                            onChange={e => setCode(e.target.value)}
+                            onKeyDown={handleKeyDown}
+                            onScroll={handleScroll}
+                            spellCheck={false}
+                            disabled={!currentQ || isTimedOut}
+                          />
+                      </div>
                   )}
               </div>
 
