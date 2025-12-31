@@ -179,7 +179,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
 
          <div className="mt-4 text-center">
            <p className="text-xs text-slate-400">Initial password for enrolled students is email address</p>
-           <p className="text-xs text-slate-400">Default password for demo is demo123</p>
+           {/* <p className="text-xs text-slate-400">Default password for demo is demo123</p> */}
          </div>
       </div>
 

@@ -187,7 +187,7 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                                 {isHW ? 'HW' : 'EX'}
                              </span>
                              {!assign.is_locked && !isDone && <Play className="w-3 h-3 opacity-50" />}
-                             {isDone && isHW && <span className="ml-1 text-[10px] bg-white px-1.5 rounded border shadow-sm">{assign.user_score}%</span>}
+                             {isDone && isHW && <span className="text-[11px] shadow-sm">{assign.user_score} PTS</span>}
                          </button>
                         );
                     })
