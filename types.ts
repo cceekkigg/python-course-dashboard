@@ -137,6 +137,12 @@ export interface AppSettings {
   course_end_date: string;
 }
 
+export interface DeadlineItem {
+  date: string;
+  task: string;
+  subtext: string;
+}
+
 export enum DashboardViewType {
   HOME = 'HOME',
   MATERIALS = 'MATERIALS',

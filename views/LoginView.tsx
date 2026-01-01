@@ -1,6 +1,4 @@
-// ==============================================================================
 // FILE PATH: views/LoginView.tsx
-// ==============================================================================
 
 import React, { useState } from 'react';
 import { User } from '../types';
@@ -22,9 +20,21 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
   // Helper to log the visit (Optimized for Free Tier limits)
   const logVisit = async (user: User) => {
     try {
-      // 1. Get IP Address
-      const res = await fetch('https://api.ipify.org?format=json');
-      const { ip } = await res.json();
+      // 1. Get IP & Country (Using free lightweight API)
+      let ip = '0.0.0.0';
+      let country = 'Unknown';
+
+      try {
+        const res = await fetch('https://api.country.is');
+        const data = await res.json();
+        ip = data.ip;
+        country = data.country; // returns 2-letter code e.g. "DE", "US"
+      } catch (e) {
+        // Fallback if API fails
+        const res = await fetch('https://api.ipify.org?format=json');
+        const data = await res.json();
+        ip = data.ip;
+      }
 
       // 2. Check for existing log entry for this user+IP
       const { data: existing } = await supabase
@@ -36,12 +46,13 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
       const newCount = (existing?.login_count || 0) + 1;
       const firstTime = existing?.first_login_at || new Date().toISOString();
 
-      // 3. Efficient Upsert
+      // 3. Efficient Upsert with Country info
       await supabase.from('access_logs').upsert({
         user_id: user.id,
         user_name: user.name,
         role: user.role,
         ip_address: ip,
+        country: country, // [NEW] Save country code
         login_count: newCount,
         first_login_at: firstTime,
         last_login_at: new Date().toISOString()
@@ -58,7 +69,8 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
     setIsLoading(true);
 
     try {
-        const input = email.trim(); // Keep case for Name matching
+        const input = email.trim();
+        // Keep case for Name matching
 
         // 1. Fetch User from Custom Roster (public.users)
         // We look up the 'email' associated with the typed username/email
@@ -83,7 +95,6 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
         // 2. REAL AUTHENTICATION
         // We do NOT check rosterUser.password locally anymore.
         // We send the credentials to Supabase Auth to verify.
-
         // Clean the email to remove hidden characters (like zero-width spaces)
         const cleanEmail = rosterUser.email.replace(/[^a-zA-Z0-9@._-]/g, '').toLowerCase();
 
@@ -179,7 +190,6 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
 
          <div className="mt-4 text-center">
            <p className="text-xs text-slate-400">Initial password for enrolled students is email address</p>
-           {/* <p className="text-xs text-slate-400">Default password for demo is demo123</p> */}
          </div>
       </div>
 

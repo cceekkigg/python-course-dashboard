@@ -1,3 +1,5 @@
+// FILE PATH: views/DashboardView.tsx
+
 import React, { useState, useEffect } from 'react';
 import { User, StudentRecord, DashboardViewType, Announcement } from '../types';
 import { LogOut, BookOpen, Award, TrendingUp, Code, Home, Calendar, Shield, Settings, X, Lock, CheckCircle } from 'lucide-react';
@@ -25,13 +27,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({ user, onLogout, students,
   const [newPassword, setNewPassword] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
 
-  // FETCH: Load Announcements from Supabase
   useEffect(() => {
     const fetchAnnouncements = async () => {
       const { data } = await supabase
         .from('announcements')
         .select('*')
-        .order('date', { ascending: false }); // Ensure 'date' column exists in DB
+        .order('date', { ascending: false });
 
       if (data) {
         setAnnouncements(data as Announcement[]);
@@ -43,8 +44,13 @@ const DashboardView: React.FC<DashboardViewProps> = ({ user, onLogout, students,
   const handleAddAnnouncement = (ann: Announcement) => {
     setAnnouncements([ann, ...announcements]);
   };
+
   const handleDeleteAnnouncement = (id: string) => {
     setAnnouncements(announcements.filter(a => a.id !== id));
+  };
+
+  const handleUpdateAnnouncement = (updatedAnn: Announcement) => {
+    setAnnouncements(announcements.map(a => a.id === updatedAnn.id ? updatedAnn : a));
   };
 
   const handleAssignmentComplete = (assignmentId: string, score: number) => {
@@ -82,6 +88,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ user, onLogout, students,
     { id: DashboardViewType.PRACTICE, label: 'Practice Arena', icon: Code },
     { id: DashboardViewType.ASSIGNMENTS, label: 'EXs & HWs', icon: Calendar }
   ];
+
   if (user.role === 'admin') {
     navItems.push({ id: DashboardViewType.ADMIN, label: 'Admin Tools', icon: Shield });
   }
@@ -103,6 +110,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ user, onLogout, students,
              announcements={announcements}
              onAddAnnouncement={handleAddAnnouncement}
              onDeleteAnnouncement={handleDeleteAnnouncement}
+             onUpdateAnnouncement={handleUpdateAnnouncement} // [CONNECTED]
              students={students}
              onUpdateStudents={onUpdateStudents}
           />
@@ -138,10 +146,10 @@ const DashboardView: React.FC<DashboardViewProps> = ({ user, onLogout, students,
               <div className="flex items-center space-x-3 mb-3 relative">
                  <img src={user.avatarUrl} alt={user.name} className="h-9 w-9 rounded-full border border-slate-600" />
                  <div className="flex-1 min-w-0">
-                    <p className="truncate text-sm font-medium text-white flex items-center gap-2">
+                   <p className="truncate text-sm font-medium text-white flex items-center gap-2">
                         {user.name}
                         {user.role === 'guest' && <span className="text-[10px] bg-yellow-500 text-slate-900 px-1.5 py-0.5 rounded font-bold">DEMO</span>}
-                    </p>
+                   </p>
                     <p className="truncate text-xs text-slate-400 capitalize">{user.role}</p>
                  </div>
                  {user.role !== 'guest' ? (
@@ -149,7 +157,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ user, onLogout, students,
                         <Settings className="w-4 h-4" />
                      </button>
                  ) : (
-                    <div className="absolute right-0 top-0 p-1 text-slate-600 cursor-not-allowed" title="Settings disabled in Demo Mode">
+                   <div className="absolute right-0 top-0 p-1 text-slate-600 cursor-not-allowed" title="Settings disabled in Demo Mode">
                         <Lock className="w-3 h-3" />
                      </div>
                  )}
@@ -170,12 +178,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({ user, onLogout, students,
       {isSettingsOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4 animate-fade-in">
              <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-                <div className="flex justify-between items-center p-6 border-b border-slate-100">
+                 <div className="flex justify-between items-center p-6 border-b border-slate-100">
                     <h3 className="text-lg font-bold text-slate-900">Account Settings</h3>
                     <button onClick={() => setIsSettingsOpen(false)}><X className="w-5 h-5 text-slate-400 hover:text-slate-600" /></button>
                 </div>
                 <div className="p-6">
-                    <form onSubmit={handleChangePassword} className="space-y-4">
+                   <form onSubmit={handleChangePassword} className="space-y-4">
                         <Input label="New Password" type="password" placeholder="Enter new password (min 6 chars)" value={newPassword} onChange={e => setNewPassword(e.target.value)} icon={<Lock className="h-5 w-5" />} />
                         {passwordSuccess && <div className="text-green-600 text-sm flex items-center"><CheckCircle className="w-4 h-4 mr-2" /> {passwordSuccess}</div>}
                         <Button type="submit" fullWidth disabled={!newPassword || newPassword.length < 6}>Update Password</Button>
