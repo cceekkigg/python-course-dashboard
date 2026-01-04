@@ -2,7 +2,7 @@
 // FILE PATH: types.ts
 // ==============================================================================
 
-export type Role = 'student' | 'admin' | 'guest';
+export type Role = 'student' | 'admin' | 'guest' | 'tester';
 
 export interface User {
   id: string;
@@ -10,7 +10,7 @@ export interface User {
   email: string;
   avatarUrl?: string;
   role: Role;
-  password?: string; // Kept for legacy/demo reasons
+  password?: string;
 }
 
 export interface StudentRecord extends User {

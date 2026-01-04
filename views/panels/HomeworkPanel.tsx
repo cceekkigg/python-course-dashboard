@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StudentRecord } from '../../types';
 import Button from '../../components/Button';
-import { ChevronLeft, Play, Terminal, Save, Loader2, Send, RotateCcw, FileText, Award, CheckSquare, Lock, AlertTriangle, X, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { ChevronLeft, Play, Terminal, Save, Loader2, Send, RotateCcw, FileText, Award, CheckSquare, Clock, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
 import { supabase } from '../../data/supabaseClient';
 import { usePyodide, AssignmentWithStatus } from './AssignmentUtils';
 
@@ -65,8 +65,7 @@ interface SimpleCodeEditorProps {
 const SimpleCodeEditor: React.FC<SimpleCodeEditorProps> = ({ value, onChange, disabled }) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const lines = value.split('\n');
-    const lineCount = lines.length;
-    const heightRows = Math.max(lineCount + 2, 3);
+    const heightRows = Math.max(lines.length + 2, 3);
     const lineHeight = 24;
     const editorHeight = heightRows * lineHeight;
 
@@ -142,13 +141,12 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
   const [deadline, setDeadline] = useState<Date | null>(null);
   const [isLate, setIsLate] = useState(false);
 
-  // Helper to calculate totals for display
   const getTotalScore = () => finalScore !== null ? finalScore : Object.values(gradingResults).reduce((acc, r) => acc + r.score, 0);
   const getMaxScore = () => Object.values(gradingResults).reduce((acc, r) => acc + r.maxPoints, 0);
 
   useEffect(() => {
     const init = async () => {
-      // 1. Fetch Course Start Date to calculate DDL
+      // 1. Calculate DDL
       try {
           const { data: settings } = await supabase
               .from('app_settings')
@@ -157,32 +155,36 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
               .single();
 
           if (settings && settings.value) {
-              const startDate = new Date(settings.value);
               const dayIndex = assignment.day_index || 0;
 
-              // Calculate "Calendar Days" considering Monday start
-              const weeksPassed = Math.floor(dayIndex / 5);
-              const dayOfWeek = dayIndex % 5; // 0=Mon, 4=Fri
-
-              // Base release date (Mon-Fri logic only)
-              const releaseDate = new Date(startDate);
-              releaseDate.setDate(startDate.getDate() + (weeksPassed * 7) + dayOfWeek);
-
-              // DDL Logic: Next Session @ 13:00
-              const ddlDate = new Date(releaseDate);
-              if (dayOfWeek === 4) {
-                  // If Friday, due next Monday (+3 days)
-                  ddlDate.setDate(releaseDate.getDate() + 3);
+              // [UPDATED] STRATEGY:
+              // If it's a Pre-Week Test (day_index < 0), we assume NO DEADLINE (Endless).
+              // This is standard for diagnostic tests or pre-course material.
+              if (dayIndex < 0) {
+                  setDeadline(null);
               } else {
-                  // Else due next day (+1 day)
-                  ddlDate.setDate(releaseDate.getDate() + 1);
+                  const startDate = new Date(settings.value);
+
+                  // Calculate "Calendar Days" considering Monday start
+                  const weeksPassed = Math.floor(dayIndex / 5);
+                  const dayOfWeek = dayIndex % 5; // 0=Mon, 4=Fri
+
+                  // Base release date
+                  const releaseDate = new Date(startDate);
+                  releaseDate.setDate(startDate.getDate() + (weeksPassed * 7) + dayOfWeek);
+
+                  // DDL Logic: Next Session @ 13:00
+                  const ddlDate = new Date(releaseDate);
+                  if (dayOfWeek === 4) { // Friday -> Due Monday
+                      ddlDate.setDate(releaseDate.getDate() + 3);
+                  } else { // Mon-Thu -> Due Next Day
+                      ddlDate.setDate(releaseDate.getDate() + 1);
+                  }
+
+                  ddlDate.setHours(13, 0, 0, 0);
+                  setDeadline(ddlDate);
+                  setIsLate(new Date() > ddlDate);
               }
-
-              // Set strict time to 13:00
-              ddlDate.setHours(13, 0, 0, 0);
-
-              setDeadline(ddlDate);
-              setIsLate(new Date() > ddlDate);
           }
       } catch (e) {
           console.error("Error calculating deadline:", e);
@@ -191,8 +193,9 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
       // 2. Storage Shim
       try { const check = window.sessionStorage; } catch (e) {
         try {
-            Object.defineProperty(window, 'sessionStorage', { value: { length: 0, getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null }, configurable: true, writable: true });
-            Object.defineProperty(window, 'localStorage', { value: { length: 0, getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null }, configurable: true, writable: true });
+            const mock = { length: 0, getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null };
+            Object.defineProperty(window, 'sessionStorage', { value: mock, configurable: true, writable: true });
+            Object.defineProperty(window, 'localStorage', { value: mock, configurable: true, writable: true });
         } catch (err) {}
       }
 
@@ -213,7 +216,6 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
              .maybeSingle();
         if (data) {
             setAnswers({ ...defaultAnswers, ...(data.saved_answers || {}) });
-
             if (data.status === 'submitted') {
                 setIsSubmitted(true);
                 setFinalScore(data.score);
@@ -249,11 +251,9 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
             for name in list(globals().keys()):
                 if not name.startswith("_") and name not in ['sys', 'js', 'input', 'io', 'pyodide']:
                     del globals()[name]
-            `);
+           `);
            await pyodide.runPythonAsync(CUSTOM_INPUT_CODE);
-       } catch (e) {
-           console.error("Soft reset failed:", e);
-       }
+       } catch (e) { console.error("Soft reset failed:", e); }
     }
   };
 
@@ -268,7 +268,6 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
               validation_status: gradingData || execStatus,
               submitted_at: new Date().toISOString()
           };
-
           if (gradingData) {
               payload.status = 'submitted';
           }
@@ -280,7 +279,6 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
           if (gradingData && onComplete) {
               onComplete(assignment.id, score);
           }
-
       } catch (err: any) {
           console.error("Failed to save progress:", err);
           alert(`Failed to save: ${err.message}`);
@@ -289,20 +287,16 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
       }
   };
 
-  // --- AUTO-GRADING ENGINE ---
   const performGrading = async () => {
       setIsSaving(true);
       setShowConfirmModal(false);
-
       const results: Record<string, GradingResult> = {};
       let totalAssignmentScore = 0;
       let maxAssignmentScore = 0;
 
       await pyodide.runPythonAsync(CUSTOM_INPUT_CODE);
-
       for (const question of assignment.questions) {
           if (question.type !== 'code') continue;
-
           const maxPoints = question.points || 0;
           maxAssignmentScore += maxPoints;
           const userCode = answers[question.id] || "";
@@ -332,10 +326,8 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
               for (const test of allTests) {
                   await pyodide.runPythonAsync(`for v in ['km', 'a', 'b', 'n', 'result', 'channel_A', 'channel_B', 'temp', 'meters', 'reversed_number', 'd1', 'd2', 'd3', 'd4']:
                       if v in globals(): del globals()[v]`);
-
                   const inputValues = test.input.split(',').map((s: string) => s.trim());
                   let injection = "";
-
                   if (variables.length > 0 && inputValues.length === variables.length) {
                       variables.forEach((v, idx) => {
                           injection += `${v} = ${inputValues[idx]}\n`;
@@ -353,7 +345,6 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
                   let captured = "";
                   let runError = false;
                   pyodide.setStdout({ batched: (msg: string) => captured += msg });
-
                   try {
                       await pyodide.runPythonAsync(codeToExecute);
                   } catch (e) {
@@ -372,7 +363,6 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
                   }
 
                   if (!passed) allPassed = false;
-
                   testResults.push({
                       input: test.input,
                       expected: expected,
@@ -384,26 +374,18 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
           }
 
           let earnedScore = allPassed ? maxPoints : 0;
-
           totalAssignmentScore += earnedScore;
-
-          results[question.id] = {
-              score: earnedScore,
-              maxPoints: maxPoints,
-              tests: testResults
-          };
-
+          results[question.id] = { score: earnedScore, maxPoints: maxPoints, tests: testResults };
       }
 
       // LATE PENALTY LOGIC
       if (isLate && totalAssignmentScore > 0) {
-        totalAssignmentScore = Math.ceil(totalAssignmentScore * 0.6); // 60% cap
+        totalAssignmentScore = Math.ceil(totalAssignmentScore * 0.6);
       }
 
       setFinalScore(totalAssignmentScore);
       setGradingResults(results);
       setIsSubmitted(true);
-
       await handleSave(true, results, totalAssignmentScore);
   };
 
@@ -411,14 +393,11 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
      if (!pyodide) return 0;
      setExecStatus(prev => ({ ...prev, [questionId]: 'running' }));
      setConsoleOutput(prev => ({ ...prev, [questionId]: `🚀 Starting Pre-check...\n` }));
-
      const userCode = answers[questionId] || "";
      const question = assignment.questions.find(q => q.id === questionId);
      if (!question) return 0;
-
      const allTests = question.validation?.test_cases || [];
      const testsToRun = allTests.filter(tc => tc.visible !== false);
-
      if (testsToRun.length === 0) {
          setConsoleOutput(prev => ({ ...prev, [questionId]: "⚠️ No visible test cases to check." }));
          setExecStatus(prev => ({ ...prev, [questionId]: 'success' }));
@@ -429,7 +408,6 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
      let codeToExecute = userCode;
      let variables: string[] = [];
      let ignoredTop = false;
-
      if (userCode.includes(delimiter)) {
          const parts = userCode.split(delimiter);
          if (parts.length > 1) {
@@ -443,18 +421,14 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
 
      let passedCount = 0;
      let logBuffer = "";
-
      try {
          await pyodide.runPythonAsync(CUSTOM_INPUT_CODE || "sys_inputs = []");
-
          for (let i = 0; i < testsToRun.length; i++) {
              const test = testsToRun[i];
              await pyodide.runPythonAsync(`for v in ['km', 'a', 'b', 'n', 'result', 'channel_A', 'channel_B', 'temp', 'meters', 'reversed_number', 'd1', 'd2', 'd3', 'd4']:
                 if v in globals(): del globals()[v]`);
-
              const inputValues = test.input.split(',').map((s: string) => s.trim());
              let injection = "";
-
              if (variables.length > 0 && inputValues.length === variables.length) {
                  variables.forEach((v, idx) => {
                      injection += `${v} = ${inputValues[idx]}\n`;
@@ -476,7 +450,6 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
              const actual = captured.trim();
              const expected = test.expected.toString().trim();
              let isMatch = actual === expected;
-
              if (!isMatch) {
                  const fActual = parseFloat(actual);
                  const fExpected = parseFloat(expected);
@@ -484,7 +457,6 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
              }
 
              const label = `Test #${i+1}`;
-
              if (isMatch) {
                  passedCount++;
                  logBuffer += `✅ [${label}] PASS\n   Input: ${test.input}\n   Output: ${actual}\n`;
@@ -516,12 +488,16 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
                   <span className="text-xs px-2 py-0.5 rounded font-bold uppercase bg-purple-100 text-purple-700">Homework</span>
                   <h1 className="text-xl font-bold text-slate-900">{assignment.title}</h1>
                </div>
-               {deadline && (
+               {deadline ? (
                    <div className="flex items-center gap-1 text-[10px] text-slate-500 mt-1 font-mono">
                        <Clock className="w-3 h-3" />
                        Due: {deadline.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                        {isLate && !isSubmitted && <span className="text-amber-700 font-bold ml-2">(LATE 60%)</span>}
                    </div>
+               ) : (
+                  <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-1 font-mono italic">
+                       <Clock className="w-3 h-3" /> No Deadline (Self-Paced)
+                  </div>
                )}
             </div>
         </div>
@@ -567,14 +543,9 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
                       </h3>
                       <p className="text-slate-600 text-sm mb-6">
                           {isLate ? (
-                              <>
-                                  The deadline has passed. Your submission will be accepted, but the maximum possible score is capped at <strong>60%</strong>.
-                              </>
+                              <>The deadline has passed. Your submission will be accepted, but the maximum possible score is capped at <strong>60%</strong>.</>
                           ) : (
-                              <>
-                                  Once submitted, your answers will be <strong>auto-graded</strong> and cannot be changed.
-                                  Please double-check your code.
-                              </>
+                              <>Once submitted, your answers will be <strong>auto-graded</strong> and cannot be changed. Please double-check your code.</>
                           )}
                       </p>
                       <div className="flex gap-3 justify-center">
@@ -597,9 +568,7 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
                 </div>
                 <h3 className="text-lg font-bold text-slate-900 mb-2">{isSubmitted ? 'Homework Submitted!' : 'Draft Saved!'}</h3>
                 <p className="text-sm text-slate-600 mb-6">{isSubmitted ? 'Your grades are now available below.' : 'Your answers have been saved.'}</p>
-                <Button fullWidth onClick={() => setSaveSuccess(false)}>
-                    Continue
-                </Button>
+                <Button fullWidth onClick={() => setSaveSuccess(false)}>Continue</Button>
             </div>
         </div>
       )}
@@ -607,13 +576,12 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
       <div className="max-w-4xl mx-auto space-y-8 px-4">
          {assignment.questions && assignment.questions.map((cell: any, idx: number) => {
             const result = gradingResults[cell.id];
-
             return (
             <React.Fragment key={cell.id}>
                 {idx === 0 && (
                     <div className="flex items-center gap-4 py-6 mt-2">
                          <div className="flex items-center gap-2 text-purple-600 font-bold uppercase tracking-wider text-lg">
-                             <FileText className="w-5 h-5" /> Questions
+                              <FileText className="w-5 h-5" /> Questions
                          </div>
                          <div className="h-px bg-purple-200 flex-1"></div>
                     </div>
@@ -621,14 +589,13 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
 
                 <div className="flex gap-4 group transition-all rounded-xl p-4 bg-purple-50/30 border border-purple-100">
                     <div className="w-8 flex-shrink-0 pt-2 text-right">
-                        <span className="font-mono text-xs font-bold text-purple-400">
-                            Q{idx + 1}
-                        </span>
+                        <span className="font-mono text-xs font-bold text-purple-400">Q{idx + 1}</span>
                     </div>
 
                     <div className="flex-1 min-w-0 space-y-4">
                         <div className="bg-purple-50 p-5 rounded-xl border border-purple-100 shadow-sm relative">
-                            {cell.points && (
+                            {/* [UPDATED] Fixed 0pt Check */}
+                            {(cell.points !== undefined && cell.points !== null) && (
                                  <div className="absolute top-0 right-0 px-2 py-1 bg-purple-100 text-purple-700 text-[10px] font-bold uppercase rounded-bl-lg rounded-tr-lg flex items-center gap-1">
                                     <Award className="w-3 h-3" /> {cell.points} {cell.points === 1 ? 'Pt' : 'Pts'}
                                 </div>
@@ -640,17 +607,15 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
                             <div className={`rounded-xl border overflow-hidden bg-white shadow-sm transition-all focus-within:ring-2 ring-purple-500/20 ${execStatus[cell.id] === 'error' ? 'border-red-300' : execStatus[cell.id] === 'success' ? 'border-green-300' : 'border-slate-300'}`}>
                                 <div className="bg-slate-50 border-b px-3 py-2 flex justify-between items-center">
                                     <span className="text-xs font-mono text-slate-500 flex items-center gap-2"><Terminal className="w-3 h-3"/> Python 3.10</span>
-                                     <button onClick={() => handleRunCode(cell.id)} disabled={!isReady || isSubmitted} className={`flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-md text-white shadow-sm transition-colors ${isSubmitted ? 'bg-slate-300 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700'}`}>
+                                    <button onClick={() => handleRunCode(cell.id)} disabled={!isReady || isSubmitted} className={`flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-md text-white shadow-sm transition-colors ${isSubmitted ? 'bg-slate-300 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700'}`}>
                                         <Play className="w-3 h-3"/> Pre-check
-                                     </button>
+                                    </button>
                                 </div>
-
                                 <SimpleCodeEditor
                                     value={answers[cell.id] || ""}
                                     onChange={(val) => setAnswers({...answers, [cell.id]: val})}
                                     disabled={isSubmitted}
                                 />
-
                                 {(consoleOutput[cell.id] && !isSubmitted) && (
                                     <div className="border-t border-slate-700 bg-[#1e1e1e] p-3">
                                         <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Pre-check Output</div>
@@ -686,8 +651,7 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
                                                     <td className="px-4 py-2 font-mono text-slate-600 truncate max-w-[120px]">{t.expected}</td>
                                                     <td className="px-4 py-2 font-mono text-slate-600 truncate max-w-[120px]">{t.actual}</td>
                                                     <td className="px-4 py-2 text-right">
-                                                        {t.passed ?
-                                                            <span className="inline-flex items-center text-green-600 font-bold"><CheckCircle className="w-3 h-3 mr-1"/> Pass</span> :
+                                                        {t.passed ? <span className="inline-flex items-center text-green-600 font-bold"><CheckCircle className="w-3 h-3 mr-1"/> Pass</span> :
                                                             <span className="inline-flex items-center text-red-600 font-bold"><XCircle className="w-3 h-3 mr-1"/> Fail</span>
                                                         }
                                                     </td>
