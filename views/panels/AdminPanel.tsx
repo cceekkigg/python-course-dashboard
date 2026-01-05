@@ -228,15 +228,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
       if (uploadError) throw uploadError;
       const { data: { publicUrl } } = supabase.storage.from('course-materials').getPublicUrl(fileName);
 
-      const weekId = adminWeeks.find(w => w.days.some(d => d.id === selectedDay))?.id;
+      const week = adminWeeks.find(w => w.days.some(d => d.id === selectedDay));
+      const dayObj = week?.days.find(d => d.id === selectedDay);
+      const dayIndex = dayObj ? dayObj.day_index : -233;
+
+      let type: Material['type'] = 'link';
+      if (fileExt === 'pdf') type = 'pdf';
+      else if (['csv', 'xlsx'].includes(fileExt || '')) type = 'csv';
+      else if (['ppt', 'pptx'].includes(fileExt || '')) type = 'slides';
+
       const { error: dbError } = await supabase.from('materials').insert({
-        title: file.name, type: fileExt === 'csv' ? 'csv' : 'pdf', url: publicUrl, week_id: weekId, day_id: selectedDay
+        title: file.name,
+        type: type,
+        url: publicUrl,
+        week_id: week?.id,
+        day_id: selectedDay,
+        day_index: dayIndex
       });
+
       if (dbError) throw dbError;
-      alert("✅ File uploaded successfully!"); setFile(null);
-    } catch (error: any) { console.error(error); alert("Error uploading: " + error.message);
+      alert("✅ File uploaded successfully!");
+      setFile(null);
+    } catch (error: any) {
+      console.error(error);
+      alert("Error uploading: " + error.message);
+    } finally {
+      setUploading(false);
     }
-    finally { setUploading(false); }
   };
 
   const toggleAssignmentLock = async (id: string, currentStatus: boolean) => {

@@ -1,10 +1,12 @@
+// ==============================================================================
 // FILE PATH: views/LoginView.tsx
+// ==============================================================================
 
 import React, { useState } from 'react';
 import { User } from '../types';
 import Button from '../components/Button';
 import Input from '../components/Input';
-import { Lock, Mail, Terminal } from 'lucide-react';
+import { Lock, Mail, Terminal, Github } from 'lucide-react';
 import { supabase } from '../data/supabaseClient';
 
 interface LoginViewProps {
@@ -17,132 +19,64 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Helper to log the visit (Optimized for Free Tier limits)
   const logVisit = async (user: User) => {
     try {
-      // 1. Get IP & Country (Using free lightweight API)
       let ip = '0.0.0.0';
       let country = 'Unknown';
-
       try {
         const res = await fetch('https://api.country.is');
         const data = await res.json();
         ip = data.ip;
-        country = data.country; // returns 2-letter code e.g. "DE", "US"
+        country = data.country;
       } catch (e) {
-        // Fallback if API fails
-        const res = await fetch('https://api.ipify.org?format=json');
-        const data = await res.json();
-        ip = data.ip;
+         const res = await fetch('https://api.ipify.org?format=json');
+         const data = await res.json();
+         ip = data.ip;
       }
-
-      // 2. Check for existing log entry for this user+IP
-      const { data: existing } = await supabase
-        .from('access_logs')
-        .select('login_count, first_login_at')
-        .match({ user_id: user.id, ip_address: ip })
-        .maybeSingle();
-
+      const { data: existing } = await supabase.from('access_logs').select('login_count, first_login_at').match({ user_id: user.id, ip_address: ip }).maybeSingle();
       const newCount = (existing?.login_count || 0) + 1;
       const firstTime = existing?.first_login_at || new Date().toISOString();
-
-      // 3. Efficient Upsert with Country info
       await supabase.from('access_logs').upsert({
         user_id: user.id,
         user_name: user.name,
         role: user.role,
         ip_address: ip,
-        country: country, // [NEW] Save country code
+        country: country,
         login_count: newCount,
         first_login_at: firstTime,
         last_login_at: new Date().toISOString()
       }, { onConflict: 'user_id, ip_address' });
-
-    } catch (e) {
-      console.warn("Could not log visit:", e);
-    }
+    } catch (e) { console.warn("Could not log visit:", e); }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
-
     try {
         const input = email.trim();
-        // Keep case for Name matching
-
-        // 1. Fetch User from Custom Roster (public.users)
-        // We look up the 'email' associated with the typed username/email
-        const { data: rosterUsers, error: rosterError } = await supabase
-            .from('users')
-            .select('*')
-            .or(`email.eq.${input},name.ilike.${input},email.ilike.${input}%`)
-            .limit(5);
-
+        const { data: rosterUsers, error: rosterError } = await supabase.from('users').select('*').or(`email.eq.${input},name.ilike.${input},email.ilike.${input}%`).limit(5);
         if (rosterError) throw rosterError;
+        const rosterUser = rosterUsers?.find(u => u.email.toLowerCase() === input.toLowerCase() || u.name.toLowerCase() === input.toLowerCase());
+        if (!rosterUser) throw new Error("You are not on the class roster.");
 
-        // Find exact match locally to be safe
-        const rosterUser = rosterUsers?.find(u =>
-            u.email.toLowerCase() === input.toLowerCase() ||
-            u.name.toLowerCase() === input.toLowerCase()
-        );
-
-        if (!rosterUser) {
-            throw new Error("You are not on the class roster.");
-        }
-
-        // 2. REAL AUTHENTICATION
-        // We do NOT check rosterUser.password locally anymore.
-        // We send the credentials to Supabase Auth to verify.
-        // Clean the email to remove hidden characters (like zero-width spaces)
         const cleanEmail = rosterUser.email.replace(/[^a-zA-Z0-9@._-]/g, '').toLowerCase();
+        let { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email: cleanEmail, password: password });
 
-        let { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-            email: cleanEmail,
-            password: password
-        });
-
-        // 3. AUTO-REGISTRATION HANDLER
-        // If "Invalid login" -> User might not exist in Auth yet. Try to Register.
         if (authError && authError.message.includes("Invalid login")) {
-
-             console.log("User not found in Auth system (or wrong pass). Attempting Auto-Registration...");
-
-             const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-                email: cleanEmail,
-                password: password,
-                options: { data: { full_name: rosterUser.name, role: rosterUser.role } }
-             });
-
+             console.log("User not found in Auth system. Attempting Auto-Registration...");
+             const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email: cleanEmail, password: password, options: { data: { full_name: rosterUser.name, role: rosterUser.role } } });
              if (signUpError) {
-                 // CRITICAL FIX: If registration fails saying "already registered",
-                 // it means the account exists but the password was wrong.
-                 if (signUpError.message.includes("already registered")) {
-                     throw new Error("Incorrect password.");
-                 }
-                 throw signUpError; // Throw real errors (network, etc)
+                 if (signUpError.message.includes("already registered")) throw new Error("Incorrect password.");
+                 throw signUpError;
              }
-
-             // Registration success! Use the new session.
              authData = { user: signUpData.user, session: signUpData.session };
+        } else if (authError) throw authError;
 
-        } else if (authError) {
-            throw authError; // Real error from the first login attempt
-        }
-
-        // 4. LAZY LINKING (The Key Step)
-        // If this roster user hasn't been linked to a UUID yet, save it now.
         if (authData.user && !rosterUser.auth_id) {
-            console.log("🔗 Linking roster account to Secure UUID...");
-            await supabase
-                .from('users')
-                .update({ auth_id: authData.user.id }) // Save the specific UUID
-                .eq('id', rosterUser.id);
+            await supabase.from('users').update({ auth_id: authData.user.id }).eq('id', rosterUser.id);
         }
 
-        // 5. Success
-        console.log("🔐 Secure Session Established");
         await logVisit(rosterUser as User);
         onLogin(rosterUser as User);
 
@@ -166,37 +100,23 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
          </div>
 
          <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-            <Input
-              id="email"
-              label="Username or Email"
-              placeholder="e.g. demo"
-              value={email}
-              onChange={e=>setEmail(e.target.value)}
-              icon={<Mail className="w-5 h-5"/>}
-              required
-            />
-            <Input
-              id="password"
-              type="password"
-              label="Password"
-              value={password}
-              onChange={e=>setPassword(e.target.value)}
-              icon={<Lock className="w-5 h-5"/>}
-              required
-            />
+            <Input id="email" label="Username or Email" placeholder="e.g. demo" value={email} onChange={e=>setEmail(e.target.value)} icon={<Mail className="w-5 h-5"/>} required />
+            <Input id="password" type="password" label="Password" value={password} onChange={e=>setPassword(e.target.value)} icon={<Lock className="w-5 h-5"/>} required />
             <Button type="submit" fullWidth isLoading={isLoading}>Sign in</Button>
             {error && <p className="text-red-500 text-sm text-center">{error}</p>}
          </form>
 
          <div className="mt-4 text-center">
-           <p className="text-xs text-slate-400">Initial password for enrolled students is email address</p>
+           <p className="text-xs text-slate-400">
+             Contact Instructor: <a href="mailto:jdr_maggiea@hotmail.com" className="hover:text-blue-600 hover:underline transition-colors">jdr_maggiea@hotmail.com</a>
+           </p>
          </div>
       </div>
 
-      <p className="mt-8 text-center text-xs text-slate-500">
-        Contact:{" "}
-        <a href="mailto:jdr_maggiea@hotmail.com" className="hover:text-slate-700 underline">
-          jdr_maggiea@hotmail.com
+      <p className="mt-8 text-center text-xs text-slate-500 flex flex-col items-center gap-1">
+        Found a bug or have a suggestion?
+        <a href="https://github.com/cceekkigg/python-course-dashboard/issues" target="_blank" rel="noreferrer" className="flex items-center gap-1 hover:text-slate-800 underline transition-colors">
+          <Github className="w-3 h-3" /> Report an issue on GitHub
         </a>
       </p>
     </div>

@@ -78,6 +78,7 @@ export interface Material {
   url: string;
   week_id?: string;
   day_id?: string;
+  day_index?: number;
 }
 
 export interface TestCase {
