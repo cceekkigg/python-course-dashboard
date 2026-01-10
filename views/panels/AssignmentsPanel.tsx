@@ -1,11 +1,7 @@
-// ==============================================================================
-// FILE PATH: views/panels/AssignmentsPanel.tsx
-// ==============================================================================
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../data/supabaseClient';
 import { StudentRecord } from '../../types';
-import { Lock, Play, Check, BrainCircuit, AlertCircle, ArrowRight, ClipboardCheck, CalendarRange, Bug, ShieldCheck } from 'lucide-react'; // [UPDATED] Added ShieldCheck/Bug icons
+import { Lock, Play, Check, BrainCircuit, AlertCircle, ArrowRight, ClipboardCheck, CalendarRange, Bug, ShieldCheck } from 'lucide-react';
 import { ExercisePanel } from './ExercisePanel';
 import { HomeworkPanel } from './HomeworkPanel';
 import { AssignmentWithStatus } from './AssignmentUtils';
@@ -22,7 +18,6 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
   const [selectedAssignment, setSelectedAssignment] = useState<AssignmentWithStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [startDateStr, setStartDateStr] = useState<string>(new Date().toISOString());
-
   const loadData = async () => {
     setLoading(true);
     try {
@@ -31,7 +26,6 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
         setStartDateStr(currentStartDate);
 
         const { data: contentData } = await supabase.from('content_assignments').select('*');
-
         let progressMap: Record<string, { status: string; score: number }> = {};
         if (user.assignmentScores) {
              Object.entries(user.assignmentScores).forEach(([id, score]) => {
@@ -58,7 +52,8 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
 
            // Standard Lock Rules
            const isDbLocked = item.is_locked === true;
-           const isGuestLocked = user.role === 'guest' && (item.day_index || 0) > 0;
+           // [FIXED] Guest Lock: Now locks if index > 1 (Since Day 1 is index 1)
+           const isGuestLocked = user.role === 'guest' && (item.day_index || 0) > 1;
 
            // [UPDATED] Final Decision: Privileged users override ALL locks
            const finalLocked = isPrivileged ? false : (isDbLocked || isGuestLocked);
@@ -72,7 +67,8 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
               is_locked: finalLocked
            };
 
-           if ((item.day_index || 0) < 0) {
+           // [FIXED] Pre-test detection: Now checks for EXACTLY 0 (Previously < 0)
+           if ((item.day_index || 0) === 0) {
                foundPreTest = enriched;
            } else {
                const idx = item.day_index || 0;
@@ -80,11 +76,9 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                tempMap[idx].push(enriched);
            }
         });
-
         Object.values(tempMap).forEach(dayList => {
             dayList.sort((a, b) => (a.type === 'exercise' ? -1 : 1));
         });
-
         setAssignmentsMap(tempMap);
         setPreAssessment(foundPreTest);
 
@@ -96,7 +90,6 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
   };
 
   useEffect(() => { loadData(); }, [user]);
-
   const handleOpen = (assignment: AssignmentWithStatus) => { setSelectedAssignment(assignment); setView('detail'); };
   const handleBack = async () => { await loadData(); setSelectedAssignment(null); setView('calendar'); };
 
@@ -111,7 +104,6 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
   const daysPerWeek = 5;
   const totalWeeks = Math.ceil(totalCourseDays / daysPerWeek);
   const weeks = Array.from({ length: totalWeeks }, (_, i) => i);
-
   return (
     <div className="space-y-8 animate-fade-in pb-12">
       <header className="flex justify-between items-center">
@@ -171,7 +163,8 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
               </div>
 
               <div className="shrink-0">
-                  {preAssessment ? (
+                  {preAssessment ?
+                  (
                       <button
                         onClick={() => handleOpen(preAssessment)}
                         disabled={preAssessment.is_locked}
@@ -207,9 +200,9 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
       {/* 2. WEEKLY BLOCKS */}
       <div className="space-y-8">
         {weeks.map((weekNum) => {
-           const weekStartDay = weekNum * daysPerWeek;
+           // [FIXED] Calendar Rendering: Start from 1. (Week 0 -> StartDay 1)
+           const weekStartDay = weekNum * daysPerWeek + 1;
            const weekDays = Array.from({ length: daysPerWeek }, (_, i) => weekStartDay + i);
-
            const colors = [
                { accent: 'bg-blue-500', iconBg: 'bg-blue-50', iconColor: 'text-blue-600', border: 'border-blue-100' },
                { accent: 'bg-indigo-500', iconBg: 'bg-indigo-50', iconColor: 'text-indigo-600', border: 'border-indigo-100' },
@@ -218,10 +211,7 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
            const theme = colors[weekNum % colors.length];
 
            // Visual logic: Week is visually locked if Guest tries to access week > 0
-           // But note: 'isPrivileged' logic inside loadData ensures 'is_locked' is FALSE for admins/testers,
-           // so we also need to make sure the header doesn't look grayed out for them.
            const isWeekLocked = user.role === 'guest' && weekNum > 0;
-
            return (
                <div key={weekNum} className={`bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden relative transition-all ${isWeekLocked ? 'opacity-75' : ''}`}>
                   <div className={`absolute top-0 left-0 w-1.5 h-full ${isWeekLocked ? 'bg-slate-300' : theme.accent}`}></div>
@@ -235,25 +225,26 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                               Week {weekNum + 1}
                               {isWeekLocked && <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded border border-slate-200">Locked</span>}
                           </h3>
-                          <p className="text-sm text-slate-500">Core Concepts & Applications • Days {weekStartDay + 1}-{weekStartDay + 5}</p>
+                          <p className="text-sm text-slate-500">Core Concepts & Applications • Days {weekStartDay}-{weekStartDay + 4}</p>
                       </div>
-                  </div>
+                   </div>
 
                   <div className="p-6 pt-4 grid grid-cols-1 md:grid-cols-5 gap-4">
                     {weekDays.map((dayIndex) => {
-                      const weeksPassed = Math.floor(dayIndex / 5);
+                      // [FIXED] Date Calculation: Offset by -1 since dayIndex is now 1-based
+                      const weeksPassed = Math.floor((dayIndex - 1) / 5);
                       const date = new Date(startDateStr);
-                      date.setDate(date.getDate() + dayIndex + (weeksPassed * 2));
+                      date.setDate(date.getDate() + (dayIndex - 1) + (weeksPassed * 2));
 
                       const dayAssignments = assignmentsMap[dayIndex] || [];
                       // Visually lock the box only if items inside are effectively locked
                       const isBoxLocked = dayAssignments.length > 0 && dayAssignments.every(a => a.is_locked);
-
                       return (
                         <div key={dayIndex} className={`min-h-[140px] rounded-xl border p-3 flex flex-col transition-all hover:shadow-sm ${isBoxLocked ? 'bg-slate-50 border-slate-100' : 'bg-white border-slate-200'}`}>
                           <div className="flex justify-between items-start mb-3">
                              <div className="text-xs font-bold text-slate-500">
-                                <span className="text-slate-400 font-normal">Day {dayIndex + 1}</span>
+                                {/* [FIXED] Label: Use dayIndex directly as it is now 1..15 */}
+                                <span className="text-slate-400 font-normal">Day {dayIndex}</span>
                                 <br/>
                                 {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                              </div>
@@ -285,12 +276,12 @@ export const AssignmentsPanel: React.FC<AssignmentsPanelProps> = ({ user, onComp
                                          {!assign.is_locked && !isDone && <Play className="w-3 h-3 opacity-50" />}
                                          {isDone && isHW && <span className="text-[11px] shadow-sm">{assign.user_score} PTS</span>}
                                      </button>
-                                   );
-                                })
+                                  );
+                               })
                              )}
                           </div>
                         </div>
-                      );
+                     );
                     })}
                   </div>
                </div>

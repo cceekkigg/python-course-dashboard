@@ -23,14 +23,11 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
 
   // Stores integers of days that are explicitly unlocked in content_assignments
   const [unlockedDayIndices, setUnlockedDayIndices] = useState<Set<number>>(new Set());
-
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-
   // Preview State
   const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
   const [csvContent, setCsvContent] = useState<string[][]>([]);
-
   const isAdmin = user.role === 'admin';
   const isTester = user.role === 'tester';
   const isGuest = user.role === 'guest';
@@ -39,7 +36,6 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
   const fetchData = async () => {
     try {
         setLoading(true);
-
         // 1. Fetch Materials (Select all columns including the new 'day_index')
         const { data: matData } = await supabase.from('materials').select('*');
         if (matData) setDynamicMaterials(matData as MaterialWithIndex[]);
@@ -64,8 +60,8 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
 
         if (assignmentData) {
             assignmentData.forEach((a: any) => {
-                // If the assignment is UNLOCKED, we add its index to the allowed set
-                if (a.is_locked === false) {
+                // [FIX] If assignment is NOT strictly locked (true), it is Open (null or false).
+                if (a.is_locked !== true) {
                     unlockedIndices.add(a.day_index);
                 }
             });
@@ -80,7 +76,6 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
   };
 
   useEffect(() => { fetchData(); }, []);
-
   // CSV Preview Effect
   useEffect(() => {
     if (previewMaterial?.type === 'csv') {
@@ -100,21 +95,17 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
 
     try {
       setUploadingFor(dayId);
-
       // Auto-Detect day_index from the current context to save to DB
       let targetIndex = 0;
       courseWeeks.forEach(w => {
           const foundDay = w.days.find(d => d.id === dayId);
           if (foundDay) targetIndex = foundDay.day_index;
       });
-
       const fileExt = file.name.split('.').pop()?.toLowerCase();
       const cleanName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
       const filePath = `${Date.now()}_${cleanName}`;
-
       const { error: uploadError } = await supabase.storage.from('course-materials').upload(filePath, file);
       if (uploadError) throw uploadError;
-
       const { data: { publicUrl } } = supabase.storage.from('course-materials').getPublicUrl(filePath);
 
       let type: Material['type'] = 'link';
@@ -140,7 +131,6 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
       setUploadingFor(null);
     }
   };
-
   const handleDelete = async (material: Material) => {
     if (!isAdmin || !confirm('Delete this material permanently?')) return;
     try {
@@ -164,14 +154,13 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
     }
   };
 
-  // [UPDATED] Check lock status against the Unlocked Set
+  // Check lock status against the Unlocked Set
   // No exceptions for pre-week; strictly follows the DB state.
   const isLocked = (index: number | undefined) => {
       if (isPrivileged) return false;
       if (index === undefined) return true; // Safety fallback
       return !unlockedDayIndices.has(index);
   };
-
   if (loading) return <div className="text-center p-10 text-slate-500">Loading course materials...</div>;
 
   return (
@@ -182,7 +171,8 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
           <p className="text-slate-600">Access lecture slides, datasets, and resources.</p>
         </div>
         {isPrivileged && (
-            <span className={`text-xs font-bold px-3 py-1 rounded-full border ${isTester ? 'text-indigo-600 bg-indigo-50 border-indigo-100' : 'text-blue-600 bg-blue-50 border-blue-100'}`}>
+            <span className={`text-xs font-bold px-3 py-1 rounded-full
+                border ${isTester ? 'text-indigo-600 bg-indigo-50 border-indigo-100' : 'text-blue-600 bg-blue-50 border-blue-100'}`}>
                 {isTester ? 'Tester Mode: Unlocked' : 'Admin Mode'}
             </span>
         )}
@@ -195,7 +185,8 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
            const isContainerLocked = !isPrivileged && (week.is_locked || guestLock);
 
            return (
-             <div key={week.id} className={`rounded-xl border transition-all ${isContainerLocked ? 'bg-slate-50 border-slate-200' : 'bg-white border-slate-200 shadow-sm'}`}>
+             <div key={week.id} className={`rounded-xl border transition-all ${isContainerLocked ?
+                'bg-slate-50 border-slate-200' : 'bg-white border-slate-200 shadow-sm'}`}>
                 <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                     <div>
                         <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Week {week.week_number}</div>
@@ -205,7 +196,8 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
                 </div>
 
                 <div className="p-0">
-                    {isContainerLocked ? (
+                    {isContainerLocked ?
+                    (
                         <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center gap-3">
                             <Lock className="w-8 h-8 opacity-20"/>
                             <span className="text-sm">Content locked</span>
@@ -214,30 +206,34 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
                         <div>
                             {week.days.map((day, idx) => {
                                 const dayMaterials = dynamicMaterials.filter(m => m.day_id === day.id);
-                                const isDayLocked = isLocked(day.day_index) && !dayMaterials.some(m => !isLocked(m.day_index));
+                                // [FIX] Lock is determined ONLY by the Day's status.
+                                const isDayLocked = isLocked(day.day_index);
 
                                 return (
                                    <div key={day.id} className={`p-5 ${idx !== week.days.length - 1 ? 'border-b border-slate-50' : ''} ${isDayLocked ? 'bg-slate-50/50' : ''}`}>
                                       <div className="flex justify-between items-start mb-4">
-                                         <h4 className={`font-bold flex items-center ${isDayLocked ? 'text-slate-400' : 'text-slate-800'}`}>
-                                            <span className={`w-2 h-2 rounded-full mr-2 ${isDayLocked ? 'bg-slate-300' : 'bg-blue-500'}`}></span>
+                                          <h4 className={`font-bold flex items-center ${isDayLocked ?
+                                              'text-slate-400' : 'text-slate-800'}`}>
+                                            <span className={`w-2 h-2 rounded-full mr-2 ${isDayLocked ?
+                                                'bg-slate-300' : 'bg-blue-500'}`}></span>
                                             {day.title}
                                          </h4>
                                          {isDayLocked && <div className="flex items-center gap-1 text-xs text-slate-400 font-bold bg-slate-100 px-2 py-1 rounded"><Lock className="w-3 h-3" /> Locked</div>}
                                       </div>
 
-                                    {isDayLocked ? (
+                                      {isDayLocked ?
+                                      (
                                           <div className="text-xs text-slate-400 italic pl-4">Materials unlocked when assignments open.</div>
                                       ) : (
                                           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                                             {dayMaterials.length === 0 && !isAdmin ? (
-                                                  <div className="text-xs text-slate-400 italic pl-1">No materials yet.</div>
+                                                <div className="text-xs text-slate-400 italic pl-1">No materials yet.</div>
                                             ) : (
-                                                  dayMaterials.map((mat) => {
-                                                      // Check Individual Material Lock (using new column)
-                                                      if (isLocked(mat.day_index)) return null;
+                                                dayMaterials.map((mat) => {
+                                                    // [FIX] Ensure we check the current DAY index, not the material index (which might be stale)
+                                                    if (isLocked(day.day_index)) return null;
 
-                                                      return (
+                                                    return (
                                                         <div key={mat.id} className="relative group bg-white rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50 transition-all flex items-center p-3">
                                                             <div className="mr-3 p-2 bg-slate-50 rounded-md group-hover:bg-white transition-colors">
                                                                 {getFileIcon(mat)}
@@ -266,8 +262,8 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
                                                                 </button>
                                                             )}
                                                         </div>
-                                                      );
-                                                  })
+                                                    );
+                                                })
                                             )}
                                             {/* (Admin Upload Button) */}
                                             {isAdmin && (
@@ -303,7 +299,8 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
                         <a href={previewMaterial.url} target="_blank" rel="noreferrer" className="text-sm text-blue-600 hover:text-blue-800 flex items-center px-3 py-1.5 rounded-lg hover:bg-blue-50">
                             <ExternalLink className="w-4 h-4 mr-1" /> Open Original
                         </a>
-                        <button onClick={() => { setPreviewMaterial(null); setCsvContent([]); }} className="p-1.5 hover:bg-slate-200 rounded-full transition-colors text-slate-500"><X className="w-6 h-6" /></button>
+                        <button onClick={() => { setPreviewMaterial(null); setCsvContent([]);
+}} className="p-1.5 hover:bg-slate-200 rounded-full transition-colors text-slate-500"><X className="w-6 h-6" /></button>
                     </div>
                 </div>
                 <div className="flex-1 bg-slate-100 overflow-auto p-4 flex items-center justify-center">
