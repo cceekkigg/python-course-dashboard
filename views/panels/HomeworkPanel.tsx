@@ -208,11 +208,17 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
 
   const runTestLogic = async (test: any, code: string, vars: string[]) => {
       await pyodide.runPythonAsync(`for v in ['km','a','b','n','result','channel_A','channel_B','temp','meters','reversed_number','d1','d2','d3','d4']: \n if v in globals(): del globals()[v]`);
-      const inputs = test.input.split(',').map((s:string) => s.trim());
+//       const inputs = test.input.split(',').map((s:string) => s.trim());
+
+//       let injection = "";
+//       if (vars.length > 0 && inputs.length === vars.length) vars.forEach((v, i) => injection += `${v} = ${inputs[i]}\n`);
+//       else if (vars.length === 1) injection = `${vars[0]} = ${test.input}\n`;
 
       let injection = "";
-      if (vars.length > 0 && inputs.length === vars.length) vars.forEach((v, i) => injection += `${v} = ${inputs[i]}\n`);
-      else if (vars.length === 1) injection = `${vars[0]} = ${test.input}\n`;
+      if (vars.length > 0) {
+          // Let Python handle the unpacking. This supports dicts, lists, and multi-line inputs automatically.
+          injection = `${vars.join(',')} = (${test.input.trim()})\n`;
+      }
 
       if (injection) await pyodide.runPythonAsync(injection);
       else try { await pyodide.runPythonAsync(test.input); } catch(e){}
