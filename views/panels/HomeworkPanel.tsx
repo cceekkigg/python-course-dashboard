@@ -131,15 +131,23 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
           const { data: settings } = await supabase.from('app_settings').select('value').eq('key', 'course_start_date').single();
           if (settings?.value) {
               const dayIndex = assignment.day_index || 0;
-              if (dayIndex < 0) {
+              if (dayIndex <= 0) {
                   setDeadline(null);
               } else {
                   const start = new Date(settings.value);
-                  const weeks = Math.floor(dayIndex / 5);
-                  const day = dayIndex % 5;
+                  // 1. Normalize: Shift dayIndex so Day 1 becomes 0 (Monday)
+                  const adjustedIndex = dayIndex - 1;
+                  // 2. Calculate full weeks passed (0-4 -> 0 weeks, 5-9 -> 1 week)
+                  const weeks = Math.floor(adjustedIndex / 5);
+                  // 3. Find day of the week (0=Mon, 1=Tue ... 4=Fri)
+                  const dayOfWeek = adjustedIndex % 5;
+                  // 4. Determine deadline buffer: If Friday (4), add 3 days (Sat+Sun+Mon). Otherwise, add 1 day.
+                  const buffer = dayOfWeek === 4 ? 3 : 1;
                   const ddl = new Date(start);
-                  ddl.setDate(start.getDate() + (weeks * 7) + day + (day === 4 ? 3 : 1));
-                  ddl.setHours(13, 0, 0, 0);
+                  // 5. Apply: Start Date + Weeks Offset + Day Offset + Deadline Buffer
+                  ddl.setDate(start.getDate() + (weeks * 7) + dayOfWeek + buffer);
+
+                  ddl.setHours(13, 0, 0, 0); // 1:00 PM
                   setDeadline(ddl);
 
                   const now = new Date();
