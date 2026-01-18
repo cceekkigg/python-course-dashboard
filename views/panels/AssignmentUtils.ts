@@ -41,17 +41,14 @@ sys.modules['builtins'].input = input
 `;
 
 // --- CONFIGURATION: Day-specific Package Requirements ---
-/**
- * Returns the list of 3rd-party Python packages required for a specific course day.
- * NOTE: dayIndex is 0-based (e.g., Day 1 is index 0).
- */
+/* Returns the list of 3rd-party Python packages required for a specific course day. */
 export const getRequiredPackages = (dayIndex: number): string[] => {
-  // Day 9 (Index 8): Data Science Intro
-  if (dayIndex === 8) {
+  // Day 9: Data Science Intro
+  if (dayIndex === 9) {
     return ['numpy', 'pandas'];
   }
-  // Day 10 (Index 9): Visualization
-  if (dayIndex === 9) {
+  // Day 10: Visualization
+  if (dayIndex === 10) {
     return ['numpy', 'pandas', 'matplotlib'];
   }
 

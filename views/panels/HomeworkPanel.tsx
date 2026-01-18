@@ -1,13 +1,9 @@
-// ==============================================================================
-// FILE PATH: views/panels/HomeworkPanel.tsx
-// ==============================================================================
-
 import React, { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, Play, Terminal, Save, Loader2, Send, RotateCcw, FileText, Award, CheckSquare, Clock, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
 import { StudentRecord } from '../../types';
 import Button from '../../components/Button';
 import { supabase } from '../../data/supabaseClient';
-import { usePyodide, AssignmentWithStatus } from './AssignmentUtils';
+import { usePyodide, AssignmentWithStatus, getRequiredPackages } from './AssignmentUtils';
 
 // --- CONSTANTS & HELPERS ---
 
@@ -62,7 +58,7 @@ const ManualMarkdown: React.FC<{ content: string }> = ({ content }) => {
                       <tr key={ri} className="hover:bg-slate-50/50">
                         {r.split('|').filter(c => c.trim()).map((c, ci) => <td key={ci} className="px-4 py-2 border-r last:border-0 border-slate-100">{processInline(c.trim())}</td>)}
                       </tr>
-                    ))}
+                  ))}
                  </tbody>
                </table>
              </div>
@@ -108,7 +104,10 @@ interface HomeworkPanelProps { user: StudentRecord; assignment: AssignmentWithSt
 
 // --- MAIN COMPONENT ---
 export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, onBack, onComplete }) => {
-  const { isReady, pyodide, error: pyodideError } = usePyodide();
+  const dayIndex = assignment.day_index || 0;
+  const dayNum = dayIndex + 1;
+  const requiredPackages = getRequiredPackages(dayIndex);
+  const { isReady, pyodide, error: pyodideError } = usePyodide(requiredPackages);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [execStatus, setExecStatus] = useState<Record<string, 'idle' | 'running' | 'success' | 'error'>>({});
   const [consoleOutput, setConsoleOutput] = useState<Record<string, string>>({});
@@ -124,42 +123,46 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
   const getTotalScore = () => finalScore !== null ? finalScore : Object.values(gradingResults).reduce((acc, r) => acc + r.score, 0);
   const getMaxScore = () => Object.values(gradingResults).reduce((acc, r) => acc + r.maxPoints, 0);
 
+  // [FIX] Cleanup plots when leaving the page
+  useEffect(() => {
+    return () => {
+        if ((window as any).document) {
+            (window as any).document.pyodideMplTarget = null;
+        }
+    };
+  }, []);
+
   useEffect(() => {
     const init = async () => {
+      console.log("Homework Opened - Day Index:", assignment.day_index);
+
       // 1. Deadline Calculation
       try {
           const { data: settings } = await supabase.from('app_settings').select('value').eq('key', 'course_start_date').single();
           if (settings?.value) {
               const dayIndex = assignment.day_index || 0;
               if (dayIndex <= 0) {
-                  setDeadline(null);
+                   setDeadline(null);
               } else {
                   const start = new Date(settings.value);
-                  // 1. Normalize: Shift dayIndex so Day 1 becomes 0 (Monday)
                   const adjustedIndex = dayIndex - 1;
-                  // 2. Calculate full weeks passed (0-4 -> 0 weeks, 5-9 -> 1 week)
                   const weeks = Math.floor(adjustedIndex / 5);
-                  // 3. Find day of the week (0=Mon, 1=Tue ... 4=Fri)
                   const dayOfWeek = adjustedIndex % 5;
-                  // 4. Determine deadline buffer: If Friday (4), add 3 days (Sat+Sun+Mon). Otherwise, add 1 day.
                   const buffer = dayOfWeek === 4 ? 3 : 1;
                   const ddl = new Date(start);
-                  // 5. Apply: Start Date + Weeks Offset + Day Offset + Deadline Buffer
                   ddl.setDate(start.getDate() + (weeks * 7) + dayOfWeek + buffer);
-
                   ddl.setHours(13, 0, 0, 0); // 1:00 PM
                   setDeadline(ddl);
-
                   const now = new Date();
                   const late = now.getTime() > ddl.getTime();
-                  console.log(`[Deadline Debug]\nCurrent: ${now.toLocaleString()}\nDue:     ${ddl.toLocaleString()}\nLate?:   ${late}`);
                   setIsLate(late);
               }
           }
       } catch (e) { console.error(e); }
 
       // 2. Storage Shim & Data Load
-      try { const m = { length:0, getItem:()=>null, setItem:()=>{}, removeItem:()=>{}, clear:()=>{}, key:()=>null }; Object.defineProperty(window,'sessionStorage',{value:m,writable:true}); Object.defineProperty(window,'localStorage',{value:m,writable:true}); } catch(e){}
+      try { const m = { length:0, getItem:()=>null, setItem:()=>{}, removeItem:()=>{}, clear:()=>{}, key:()=>null };
+      Object.defineProperty(window,'sessionStorage',{value:m,writable:true}); Object.defineProperty(window,'localStorage',{value:m,writable:true}); } catch(e){}
 
       const defaults: Record<string, string> = {};
       assignment.questions?.forEach(q => { if(q.type==='code' && q.starter_code) defaults[q.id] = q.starter_code; });
@@ -188,7 +191,9 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
     setExecStatus({}); setConsoleOutput({});
     if (pyodide && isReady) {
        try {
-           await pyodide.runPythonAsync(`for n in list(globals().keys()):\n if not n.startswith("_") and n not in ['sys','js','input','io','pyodide']: del globals()[n]`);
+           await pyodide.runPythonAsync(`for n in list(globals().keys()):\n if not n.startswith("_")
+           and n not in ['sys','js','input','io','pyodide','numpy','pandas','matplotlib']:
+           del globals()[n]`);
            await pyodide.runPythonAsync(CUSTOM_INPUT_CODE);
        } catch (e) { console.error(e); }
     }
@@ -216,20 +221,19 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
 
   const runTestLogic = async (test: any, code: string, vars: string[]) => {
       await pyodide.runPythonAsync(`for v in ['km','a','b','n','result','channel_A','channel_B','temp','meters','reversed_number','d1','d2','d3','d4']: \n if v in globals(): del globals()[v]`);
-//       const inputs = test.input.split(',').map((s:string) => s.trim());
 
-//       let injection = "";
-//       if (vars.length > 0 && inputs.length === vars.length) vars.forEach((v, i) => injection += `${v} = ${inputs[i]}\n`);
-//       else if (vars.length === 1) injection = `${vars[0]} = ${test.input}\n`;
+      const rawInput = test.input !== undefined ? test.input : (Array.isArray(test.inputs) ? test.inputs[0] : "");
+      const safeInput = String(rawInput);
 
       let injection = "";
       if (vars.length > 0) {
-          // Let Python handle the unpacking. This supports dicts, lists, and multi-line inputs automatically.
-          injection = `${vars.join(',')} = (${test.input.trim()})\n`;
+          injection = `${vars.join(',')} = (${safeInput.trim()})\n`;
       }
 
       if (injection) await pyodide.runPythonAsync(injection);
-      else try { await pyodide.runPythonAsync(test.input); } catch(e){}
+      else try {
+          if (safeInput.trim()) await pyodide.runPythonAsync(safeInput);
+      } catch(e){}
 
       let captured = "";
       pyodide.setStdout({ batched: (msg: string) => captured += msg });
@@ -248,24 +252,32 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
           const { code: runCode, vars } = parseVariables(answers[q.id] || "");
           const tests = q.validation?.test_cases || [];
           const testRes: TestResult[] = [];
-          let allPassed = true;
 
-          if (!tests.length) allPassed = runCode.trim().length > 0;
-          else {
+          let passedCount = 0;
+
+          if (!tests.length) {
+              const hasCode = runCode.trim().length > 0;
+              if (hasCode) passedCount = 1;
+          } else {
               for (const t of tests) {
-                  let actual = "", passed = false, runError = false;
+                  let actual = "", passed = false;
                   try {
                       actual = await runTestLogic(t, runCode, vars);
                       passed = actual === t.expected.toString().trim();
                       if (!passed) passed = normalizeString(actual) === normalizeString(t.expected.toString().trim());
-                      if (!passed) { const fa = parseFloat(actual), fe = parseFloat(t.expected.toString().trim()); if (!isNaN(fa) && !isNaN(fe)) passed = Math.abs(fa - fe) < 0.01; }
-                  } catch (e) { actual = "Runtime Error"; runError = true; }
+                      if (!passed) { const fa = parseFloat(actual), fe = parseFloat(t.expected.toString().trim());
+                      if (!isNaN(fa) && !isNaN(fe)) passed = Math.abs(fa - fe) < 0.01;
+                      }
+                  } catch (e) { actual = "Runtime Error"; }
 
-                  if (!passed) allPassed = false;
+                  if (passed) passedCount++;
                   testRes.push({ input: t.input, expected: t.expected.toString().trim(), actual, passed, visible: !!t.visible });
               }
           }
-          const earned = allPassed ? (q.points || 0) : 0;
+
+          const totalTests = tests.length || 1;
+          const earned = Math.round((passedCount / totalTests) * (q.points || 0));
+
           totalScore += earned;
           results[q.id] = { score: earned, maxPoints: q.points || 0, tests: testRes };
       }
@@ -277,8 +289,24 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
 
   const handleRunCode = async (qid: string) => {
      if (!pyodide) return 0;
+
+     // 1. Trigger render
      setExecStatus(p => ({ ...p, [qid]: 'running' }));
      setConsoleOutput(p => ({ ...p, [qid]: `🚀 Starting Pre-check...\n` }));
+
+     // 2. [FIX] Wait for DOM update
+     await new Promise(resolve => setTimeout(resolve, 0));
+
+     // 3. Set plot target
+     if (dayNum === 10) {
+        const plotDiv = document.getElementById(`plot-output-${qid}`);
+        if (plotDiv) {
+            plotDiv.innerHTML = ""; // Clear old plots
+            (window as any).document.pyodideMplTarget = plotDiv;
+        }
+     } else {
+        (window as any).document.pyodideMplTarget = null;
+     }
 
      const q = assignment.questions.find(q => q.id === qid);
      const tests = q?.validation?.test_cases?.filter(t => t.visible !== false) || [];
@@ -295,22 +323,29 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
              const expected = t.expected.toString().trim();
              let match = actual === expected;
              if (!match) match = normalizeString(actual) === normalizeString(expected);
-             if (!match) { const fa = parseFloat(actual), fe = parseFloat(expected); if (!isNaN(fa) && !isNaN(fe)) match = Math.abs(fa - fe) < 0.01; }
+             if (!match) { const fa = parseFloat(actual), fe = parseFloat(expected);
+             if (!isNaN(fa) && !isNaN(fe)) match = Math.abs(fa - fe) < 0.01;
+             }
 
-             if (match) { passed++; log += `✅ [Test #${i+1}] PASS\n   Input: ${t.input}\n   Output: ${actual}\n`; }
-             else { log += `❌ [Test #${i+1}] FAIL\n   Input: ${t.input}\n   Expected: ${expected}\n   Got: ${actual}\n`; if(!ignoredTop) log += `   ⚠️ Hint: ensure delimiter present.\n`; }
+             if (match) { passed++;
+             log += `✅ [Test #${i+1}] PASS\n   Input: ${t.input}\n   Output: ${actual}\n`;
+             }
+             else { log += `❌ [Test #${i+1}] FAIL\n   Input: ${t.input}\n   Expected: ${expected}\n   Got: ${actual}\n`;
+             if(!ignoredTop) log += `   ⚠️ Hint: ensure delimiter present.\n`;
+             }
          }
-         setConsoleOutput(p => ({ ...p, [qid]: log })); setExecStatus(p => ({ ...p, [qid]: 'success' }));
+         setConsoleOutput(p => ({ ...p, [qid]: log }));
+         setExecStatus(p => ({ ...p, [qid]: 'success' }));
          await handleSave(true); // Auto-save logic
          return passed / tests.length;
      } catch (e: any) {
-         setConsoleOutput(p => ({ ...p, [qid]: `🔥 Error:\n${e.message}` })); setExecStatus(p => ({ ...p, [qid]: 'error' }));
+         setConsoleOutput(p => ({ ...p, [qid]: `🔥 Error:\n${e.message}` }));
+         setExecStatus(p => ({ ...p, [qid]: 'error' }));
          return 0;
      }
   };
 
   if (pyodideError) return <div className="p-8 text-center text-red-600">{pyodideError}</div>;
-
   return (
     <div className="space-y-6 relative min-h-screen pb-20">
       <header className="flex items-center justify-between border-b border-slate-200 pb-4 sticky top-0 bg-slate-50 z-10 pt-2 px-4 shadow-sm">
@@ -323,7 +358,7 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
                </div>
                {deadline ? (
                    <div className="flex items-center gap-1 text-[10px] text-slate-500 mt-1 font-mono">
-                       <Clock className="w-3 h-3" /> Due: {deadline.toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })}
+                      <Clock className="w-3 h-3" /> Due: {deadline.toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })}
                        {isLate && !isSubmitted && <span className="text-amber-700 font-bold ml-2">(LATE 60%)</span>}
                    </div>
                ) : <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-1 font-mono italic"><Clock className="w-3 h-3" /> No Deadline</div>}
@@ -387,10 +422,25 @@ export const HomeworkPanel: React.FC<HomeworkPanelProps> = ({ user, assignment, 
                             <div className={`rounded-xl border overflow-hidden bg-white shadow-sm ring-purple-500/20 ${execStatus[cell.id] === 'error' ? 'border-red-300' : execStatus[cell.id] === 'success' ? 'border-green-300' : 'border-slate-300'}`}>
                                 <div className="bg-slate-50 border-b px-3 py-2 flex justify-between items-center">
                                     <span className="text-xs font-mono text-slate-500 flex items-center gap-2"><Terminal className="w-3 h-3"/> Python 3.10</span>
-                                    <button onClick={() => handleRunCode(cell.id)} disabled={!isReady || isSubmitted} className={`flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-md text-white shadow-sm transition-colors ${isSubmitted ? 'bg-slate-300 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700'}`}><Play className="w-3 h-3"/> Pre-check</button>
+                                     <button onClick={() => handleRunCode(cell.id)} disabled={!isReady || isSubmitted} className={`flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-md text-white shadow-sm transition-colors ${isSubmitted ? 'bg-slate-300 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700'}`}><Play className="w-3 h-3"/> Pre-check</button>
                                 </div>
                                 <SimpleCodeEditor value={answers[cell.id] || ""} onChange={(val) => setAnswers({...answers, [cell.id]: val})} disabled={isSubmitted} />
-                                {(consoleOutput[cell.id] && !isSubmitted) && <div className="border-t border-slate-700 bg-[#1e1e1e] p-3"><div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Output</div><pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap">{consoleOutput[cell.id]}</pre></div>}
+
+                                {/* Container for console output AND plots */}
+                                {(consoleOutput[cell.id] || execStatus[cell.id]) && (
+                                    <div className="border-t border-slate-700 bg-[#1e1e1e] p-3">
+                                        {consoleOutput[cell.id] && (
+                                          <>
+                                            <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Output</div>
+                                            <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap">{consoleOutput[cell.id]}</pre>
+                                          </>
+                                        )}
+                                        {/* Plot Target Div - Day 10 Only */}
+                                        {dayNum === 10 && (
+                                            <div id={`plot-output-${cell.id}`} className="mt-2 flex justify-center bg-white rounded-lg overflow-hidden empty:hidden"></div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         )}
                         {isSubmitted && result && (

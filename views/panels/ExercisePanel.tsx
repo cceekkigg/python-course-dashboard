@@ -1,7 +1,3 @@
-// ==============================================================================
-// FILE PATH: views/panels/ExercisePanel.tsx
-// ==============================================================================
-
 import React, { useState, useEffect, useRef } from 'react';
 import { StudentRecord } from '../../types';
 import Button from '../../components/Button';
@@ -9,7 +5,7 @@ import { ChevronLeft, Play, Clock, Terminal, Eye, EyeOff, CheckCircle, Save, Loa
 import { supabase } from '../../data/supabaseClient';
 import { usePyodide, formatTime, AssignmentWithStatus, INPUT_OVERRIDE_CODE } from './AssignmentUtils';
 
-// --- MARKDOWN & EDITOR HELPERS (Inlined for completeness) ---
+// --- MARKDOWN & EDITOR HELPERS ---
 const processInline = (text: string) => {
   const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
   return parts.map((part, i) => {
@@ -38,7 +34,6 @@ const SimpleCodeEditor: React.FC<{value: string, onChange: (val: string) => void
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const lines = value.split('\n');
     const heightRows = Math.max(lines.length + 2, 3);
-
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Tab') {
             e.preventDefault();
@@ -79,17 +74,12 @@ interface ExercisePanelProps {
 }
 
 export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, onBack }) => {
-  // [TARGET 1] Configure Packages for Day 9 & 10
-  // Note: day_index is 0-based. Day 9 = index 8. Day 10 = index 9.
   const dayIndex = assignment.day_index || 0;
-  const dayNum = dayIndex + 1; // Convert to 1-based "Day X"
+  const dayNum = dayIndex;
 
   let requiredPkgs: string[] = [];
-  if (dayNum === 9) {
-      requiredPkgs = ['numpy', 'pandas'];
-  } else if (dayNum === 10) {
-      requiredPkgs = ['numpy', 'pandas', 'matplotlib'];
-  }
+  if (dayNum === 9) requiredPkgs = ['numpy', 'pandas'];
+  else if (dayNum === 10) requiredPkgs = ['numpy', 'pandas', 'matplotlib'];
 
   const { isReady, pyodide, error: pyodideError } = usePyodide(requiredPkgs);
 
@@ -104,22 +94,21 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // [TARGET 3] Completion Logic
-  // Filter questions that are Practice tasks (starting with P or labeled [P...])
-  const pTasks = assignment.questions.filter(q =>
-    q.type === 'code' && (q.id.startsWith('P') || /\[P\d+\]/.test(q.content))
-  );
-  // If no P tasks exist, we track ALL code tasks.
-  const completionTarget = pTasks.length > 0
-    ? pTasks
-    : assignment.questions.filter(q => q.type === 'code');
-
-  // This boolean recalculates every render based on execStatus
+  const pTasks = assignment.questions.filter(q => q.type === 'code' && (q.id.startsWith('P') || /\[P\d+\]/.test(q.content)));
+  const completionTarget = pTasks.length > 0 ? pTasks : assignment.questions.filter(q => q.type === 'code');
   const allTasksCompleted = completionTarget.length > 0 && completionTarget.every(q => execStatus[q.id] === 'success');
+
+  // [FIX] Cleanup plots when leaving the page
+  useEffect(() => {
+    return () => {
+        if ((window as any).document) {
+            (window as any).document.pyodideMplTarget = null;
+        }
+    };
+  }, []);
 
   useEffect(() => {
     const init = async () => {
-      // Storage Patch
       try { const m = { length:0, getItem:()=>null, setItem:()=>{}, removeItem:()=>{}, clear:()=>{}, key:()=>null };
             Object.defineProperty(window,'sessionStorage',{value:m,writable:true});
             Object.defineProperty(window,'localStorage',{value:m,writable:true});
@@ -162,7 +151,6 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
     if (!confirm("Restart Kernel?")) return;
     setExecStatus({});
     setConsoleOutput({});
-    // Soft Reset
     if (pyodide && isReady) {
        try {
            await pyodide.runPythonAsync(`
@@ -204,8 +192,24 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
 
   const handleRunCode = async (cellId: string) => {
      if (!pyodide || !isReady) return;
+
+     // 1. Update State (Triggers Render)
      setExecStatus(prev => ({ ...prev, [cellId]: 'running' }));
      setConsoleOutput(prev => ({ ...prev, [cellId]: 'Running...\n' }));
+
+     // 2. [FIX] Wait for DOM update so the div exists
+     await new Promise(resolve => setTimeout(resolve, 0));
+
+     // 3. Set plot target
+     if (dayNum === 10) {
+        const plotDiv = document.getElementById(`plot-output-${cellId}`);
+        if (plotDiv) {
+            plotDiv.innerHTML = ""; // Clear old plots
+            (window as any).document.pyodideMplTarget = plotDiv;
+        }
+     } else {
+        (window as any).document.pyodideMplTarget = null;
+     }
 
      const userCode = answers[cellId] || "";
      try {
@@ -216,7 +220,6 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
 
          setConsoleOutput(prev => ({ ...prev, [cellId]: outputBuffer.join('\n') }));
          setExecStatus(prev => ({ ...prev, [cellId]: 'success' }));
-         // Note: allTasksCompleted will auto-recalculate on next render due to execStatus change
      } catch (err: any) {
          setConsoleOutput(prev => ({ ...prev, [cellId]: `Runtime Error: ${err.message}` }));
          setExecStatus(prev => ({ ...prev, [cellId]: 'error' }));
@@ -244,25 +247,21 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
 
         <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={handleRestart} title="Restart Kernel" className="text-slate-500 hover:text-red-600 hover:bg-red-50">
-                <RotateCcw className="w-4 h-4" />
+               <RotateCcw className="w-4 h-4" />
             </Button>
             <Button size="sm" variant="outline" onClick={() => handleSave(false)} disabled={isSaving || user.role === 'guest'} className="text-slate-600 border-slate-300 hover:bg-slate-100">
                 {isSaving ? <Loader2 className="w-3 h-3 mr-2 animate-spin" /> : <Save className="w-3 h-3 mr-2" />} Save
             </Button>
-
-            {/* [TARGET 3 FIX] Complete Button Logic */}
-            {/* If the timer has started OR valid work is done, show the Finish button options */}
             {hasStarted || allTasksCompleted ? (
                 <Button
                     size="sm"
                     onClick={handleCompleteExercise}
-                    // Only disable if tasks aren't done (and not currently saving)
                     disabled={!allTasksCompleted || isSaving}
                     className={`${allTasksCompleted ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-300 cursor-not-allowed'} text-white transition-colors`}
                 >
                     <CheckCircle className="w-3 h-3 mr-2" /> Complete
                 </Button>
-            ) : (
+               ) : (
                 <Button size="sm" onClick={handleStartTimer} className="bg-green-600 hover:bg-green-700 text-white">
                     <Play className="w-3 h-3 mr-2" /> Start Timer
                 </Button>
@@ -270,7 +269,6 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
         </div>
       </header>
 
-      {/* Save Success Modal */}
       {saveSuccess && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fade-in">
             <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full text-center border-t-4 border-green-500">
@@ -284,7 +282,6 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
         </div>
       )}
 
-      {/* Content */}
       <div className="max-w-4xl mx-auto space-y-8 px-4">
          {assignment.questions.map((cell, idx) => {
             const hasRun = execStatus[cell.id] === 'success' || execStatus[cell.id] === 'error';
@@ -298,11 +295,11 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
                 {showReviewHeader && (
                     <div className="flex items-center gap-4 py-6 mt-2">
                          <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-lg">
-                              <BookOpen className="w-5 h-5" /> Lecture Review
+                             <BookOpen className="w-5 h-5" /> Lecture Review
                          </div>
                          <div className="h-px bg-slate-200 flex-1"></div>
                     </div>
-                 )}
+                )}
                 {showExerciseHeader && (
                     <div className="flex items-center gap-4 py-6 mt-8">
                          <div className="flex items-center gap-2 text-indigo-600 font-bold uppercase tracking-wider text-lg">
@@ -310,7 +307,7 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
                          </div>
                          <div className="h-px bg-indigo-200 flex-1"></div>
                     </div>
-                )}
+               )}
                 <div className={`flex gap-4 group transition-all rounded-xl p-4 ${isPractice ? 'bg-indigo-50/50 border border-indigo-100' : ''}`}>
                     <div className="w-8 flex-shrink-0 pt-2 text-right">
                         <span className={`font-mono text-xs font-bold ${isPractice ? 'text-indigo-400' : 'text-slate-400'}`}>#{idx + 1}</span>
@@ -329,10 +326,20 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
                                    </button>
                                 </div>
                                 <SimpleCodeEditor value={answers[cell.id] || ""} onChange={(val) => setAnswers({...answers, [cell.id]: val})} />
-                                {(consoleOutput[cell.id]) && (
+
+                                {/* Container for console output AND plots */}
+                                {(consoleOutput[cell.id] || execStatus[cell.id]) && (
                                     <div className="border-t border-slate-700 bg-[#1e1e1e] p-3">
-                                        <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Output</div>
-                                        <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap">{consoleOutput[cell.id]}</pre>
+                                        {consoleOutput[cell.id] && (
+                                          <>
+                                            <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Output</div>
+                                            <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap">{consoleOutput[cell.id]}</pre>
+                                          </>
+                                        )}
+                                        {/* Plot Target Div - Day 10 Only */}
+                                        {dayNum === 10 && (
+                                            <div id={`plot-output-${cell.id}`} className="mt-2 flex justify-center bg-white rounded-lg overflow-hidden empty:hidden"></div>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -358,7 +365,7 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
                 </div>
             </React.Fragment>
             );
-         })}
+        })}
       </div>
     </div>
   );
