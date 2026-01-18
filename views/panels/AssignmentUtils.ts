@@ -1,3 +1,7 @@
+// ==============================================================================
+// FILE PATH: views/panels/AssignmentUtils.ts
+// ==============================================================================
+
 import { useState, useEffect, useRef } from 'react';
 import { AssignmentContent } from '../../types';
 
@@ -17,7 +21,7 @@ export interface TestCase {
 }
 
 // --- CONSTANTS ---
-// UPDATED: Sync version with PracticePanel to prevent LinkError/Wasm mismatch
+// Using 0.25.0 to ensure compatibility with modern packages
 const PYODIDE_VERSION = "0.25.0";
 const PYODIDE_BASE_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 
@@ -35,6 +39,25 @@ def input(prompt=""):
 
 sys.modules['builtins'].input = input
 `;
+
+// --- CONFIGURATION: Day-specific Package Requirements ---
+/**
+ * Returns the list of 3rd-party Python packages required for a specific course day.
+ * NOTE: dayIndex is 0-based (e.g., Day 1 is index 0).
+ */
+export const getRequiredPackages = (dayIndex: number): string[] => {
+  // Day 9 (Index 8): Data Science Intro
+  if (dayIndex === 8) {
+    return ['numpy', 'pandas'];
+  }
+  // Day 10 (Index 9): Visualization
+  if (dayIndex === 9) {
+    return ['numpy', 'pandas', 'matplotlib'];
+  }
+
+  // Default: No extra packages (Standard Library only)
+  return [];
+};
 
 // --- UTILS ---
 export const formatTime = (sec: number) => {
@@ -66,28 +89,24 @@ const applyStoragePatch = () => {
 };
 
 // --- HOOK ---
-export const usePyodide = () => {
+export const usePyodide = (requiredPackages: string[] = []) => {
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pyodide, setPyodide] = useState<any>(null);
   const initializationRef = useRef(false);
 
   useEffect(() => {
-    if (initializationRef.current) return;
-    initializationRef.current = true;
+    // If we have packages, we might need to re-verify loading even if initRef is true
+    // But for this simple implementation, we rely on the component mounting lifecycle.
 
     const loadEngine = async () => {
       try {
         applyStoragePatch();
 
-        // 1. Check Global
-        if ((window as any).pyodide) {
-          setPyodide((window as any).pyodide);
-          setIsReady(true);
-          return;
-        }
+        // 1. Check Global Instance
+        let py = (window as any).pyodide;
 
-        // 2. Load Script
+        // 2. Load Script if missing
         if (!document.getElementById('pyodide-script')) {
           const script = document.createElement('script');
           script.src = `${PYODIDE_BASE_URL}pyodide.js`;
@@ -101,17 +120,30 @@ export const usePyodide = () => {
           });
         }
 
-        // 3. Initialize with Explicit URL
-        if ((window as any).loadPyodide) {
-          const py = await (window as any).loadPyodide({
-             indexURL: PYODIDE_BASE_URL,
-             stdout: (msg: string) => console.log("[Python]", msg),
-             stderr: (msg: string) => console.error("[Python]", msg)
-          });
-          (window as any).pyodide = py; // Cache globally
-          setPyodide(py);
-          setIsReady(true);
+        // 3. Initialize Engine if not ready
+        if (!py) {
+            // Wait for loadPyodide to be available on window
+            if ((window as any).loadPyodide) {
+                py = await (window as any).loadPyodide({
+                    indexURL: PYODIDE_BASE_URL,
+                    stdout: (msg: string) => console.log("[Python]", msg),
+                    stderr: (msg: string) => console.error("[Python]", msg)
+                });
+                (window as any).pyodide = py; // Cache globally
+            }
         }
+
+        // 4. Load Required Packages
+        if (py && requiredPackages.length > 0) {
+            // 'micropip' is the package manager for Pyodide
+            await py.loadPackage("micropip");
+            // Load the requested 3rd party libraries
+            // Pyodide handles caching, so calling this multiple times is safe/fast
+            await py.loadPackage(requiredPackages);
+        }
+
+        setPyodide(py);
+        setIsReady(true);
 
       } catch (err: any) {
         console.error("Pyodide Init Failed:", err);
@@ -120,7 +152,7 @@ export const usePyodide = () => {
     };
 
     loadEngine();
-  }, []);
+  }, [requiredPackages.join(',')]); // Re-run if the package list requirements change
 
   return { isReady, pyodide, error };
 };

@@ -1,27 +1,15 @@
+// ==============================================================================
+// FILE PATH: views/panels/ExercisePanel.tsx
+// ==============================================================================
+
 import React, { useState, useEffect, useRef } from 'react';
 import { StudentRecord } from '../../types';
 import Button from '../../components/Button';
 import { ChevronLeft, Play, Clock, Terminal, Eye, EyeOff, CheckCircle, Save, Loader2, BookOpen, Dumbbell, RotateCcw } from 'lucide-react';
 import { supabase } from '../../data/supabaseClient';
-import { usePyodide, formatTime, AssignmentWithStatus } from './AssignmentUtils';
+import { usePyodide, formatTime, AssignmentWithStatus, INPUT_OVERRIDE_CODE } from './AssignmentUtils';
 
-// --- CUSTOM INPUT OVERRIDE ---
-const CUSTOM_INPUT_CODE = `
-import sys
-import js
-
-def input(prompt=""):
-    msg = f"🐍 Python Input:\\n{prompt}"
-    val = js.prompt(msg)
-    if val is None:
-        return ""
-    print(f"{prompt}{val}")
-    return str(val)
-
-sys.modules['builtins'].input = input
-`;
-
-// --- MARKDOWN RENDERERS ---
+// --- MARKDOWN & EDITOR HELPERS (Inlined for completeness) ---
 const processInline = (text: string) => {
   const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
   return parts.map((part, i) => {
@@ -42,28 +30,14 @@ const formatLine = (line: string, index: number) => {
 };
 
 const ManualMarkdown: React.FC<{ content: string }> = ({ content }) => {
-  const cleanContent = content
-    .replace(/\[.*?\]\(.*?\)/g, '')
-    .replace(/\[P\d+\]/g, '')
-    .trim();
-
+  const cleanContent = content.replace(/\[.*?\]\(.*?\)/g, '').replace(/\[P\d+\]/g, '').trim();
   return <div className="font-sans">{cleanContent.split('\n').map((line, idx) => formatLine(line, idx))}</div>;
 };
 
-// --- SIMPLE CODE EDITOR COMPONENT ---
-interface SimpleCodeEditorProps {
-    value: string;
-    onChange: (val: string) => void;
-}
-
-const SimpleCodeEditor: React.FC<SimpleCodeEditorProps> = ({ value, onChange }) => {
+const SimpleCodeEditor: React.FC<{value: string, onChange: (val: string) => void}> = ({ value, onChange }) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-
     const lines = value.split('\n');
-    const lineCount = lines.length;
-    const heightRows = Math.max(lineCount + 2, 3);
-    const lineHeight = 24;
-    const editorHeight = heightRows * lineHeight;
+    const heightRows = Math.max(lines.length + 2, 3);
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Tab') {
@@ -81,7 +55,7 @@ const SimpleCodeEditor: React.FC<SimpleCodeEditorProps> = ({ value, onChange }) 
     };
 
     return (
-        <div className="flex bg-[#1e1e1e] overflow-hidden relative" style={{ height: `${editorHeight}px` }}>
+        <div className="flex bg-[#1e1e1e] overflow-hidden relative" style={{ height: `${heightRows * 24}px` }}>
             <div className="w-10 bg-slate-900 text-slate-500 text-right pr-2 pt-4 select-none font-mono text-sm leading-6 border-r border-slate-700 shrink-0">
                 {lines.map((_, i) => ( <div key={i}>{i + 1}</div> ))}
             </div>
@@ -97,6 +71,7 @@ const SimpleCodeEditor: React.FC<SimpleCodeEditorProps> = ({ value, onChange }) 
     );
 };
 
+// --- MAIN COMPONENT ---
 interface ExercisePanelProps {
   user: StudentRecord;
   assignment: AssignmentWithStatus;
@@ -104,7 +79,19 @@ interface ExercisePanelProps {
 }
 
 export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, onBack }) => {
-  const { isReady, pyodide, error: pyodideError } = usePyodide();
+  // [TARGET 1] Configure Packages for Day 9 & 10
+  // Note: day_index is 0-based. Day 9 = index 8. Day 10 = index 9.
+  const dayIndex = assignment.day_index || 0;
+  const dayNum = dayIndex + 1; // Convert to 1-based "Day X"
+
+  let requiredPkgs: string[] = [];
+  if (dayNum === 9) {
+      requiredPkgs = ['numpy', 'pandas'];
+  } else if (dayNum === 10) {
+      requiredPkgs = ['numpy', 'pandas', 'matplotlib'];
+  }
+
+  const { isReady, pyodide, error: pyodideError } = usePyodide(requiredPkgs);
 
   // State
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -112,27 +99,35 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
   const [consoleOutput, setConsoleOutput] = useState<Record<string, string>>({});
   const [visibleSolutions, setVisibleSolutions] = useState<Record<string, boolean>>({});
 
-  // Timing & UI State
   const [hasStarted, setHasStarted] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Initialization
+  // [TARGET 3] Completion Logic
+  // Filter questions that are Practice tasks (starting with P or labeled [P...])
+  const pTasks = assignment.questions.filter(q =>
+    q.type === 'code' && (q.id.startsWith('P') || /\[P\d+\]/.test(q.content))
+  );
+  // If no P tasks exist, we track ALL code tasks.
+  const completionTarget = pTasks.length > 0
+    ? pTasks
+    : assignment.questions.filter(q => q.type === 'code');
+
+  // This boolean recalculates every render based on execStatus
+  const allTasksCompleted = completionTarget.length > 0 && completionTarget.every(q => execStatus[q.id] === 'success');
+
   useEffect(() => {
     const init = async () => {
-      try { const check = window.sessionStorage; } catch (e) {
-        try {
-            Object.defineProperty(window, 'sessionStorage', { value: { length: 0, getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null }, configurable: true, writable: true });
-            Object.defineProperty(window, 'localStorage', { value: { length: 0, getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, key: () => null }, configurable: true, writable: true });
-        } catch (err) {}
-      }
+      // Storage Patch
+      try { const m = { length:0, getItem:()=>null, setItem:()=>{}, removeItem:()=>{}, clear:()=>{}, key:()=>null };
+            Object.defineProperty(window,'sessionStorage',{value:m,writable:true});
+            Object.defineProperty(window,'localStorage',{value:m,writable:true});
+      } catch(e){}
 
       const defaultAnswers: Record<string, string> = {};
       assignment.questions.forEach(q => {
-          if (q.type === 'code' && q.starter_code) {
-             defaultAnswers[q.id] = q.starter_code;
-          }
+          if (q.type === 'code' && q.starter_code) defaultAnswers[q.id] = q.starter_code;
       });
 
       if (user.role !== 'guest') {
@@ -150,7 +145,6 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
           setAnswers(defaultAnswers);
       }
     };
-
     init();
   }, [user.id, assignment.id, assignment.questions]);
 
@@ -162,41 +156,22 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
     return () => clearInterval(timer);
   }, [hasStarted]);
 
-  // --- LOGIC: Identify P-Tasks for Completion Check ---
-  const pTasks = assignment.questions.filter(q =>
-    q.type === 'code' && (q.id.startsWith('P') || /\[P\d+\]/.test(q.content))
-  );
-
-  // If P-tasks exist, we ONLY check those. If not, we fall back to checking all code tasks.
-  const completionTarget = pTasks.length > 0
-    ? pTasks
-    : assignment.questions.filter(q => q.type === 'code');
-
-  const allTasksCompleted = completionTarget.length > 0 && completionTarget.every(q => execStatus[q.id] === 'success');
-
   const handleStartTimer = () => setHasStarted(true);
 
   const handleRestart = async () => {
-    if (!confirm("Restart Kernel? This will clear outputs and variables, but keep your code.")) return;
-
-    // 1. Clear UI State
+    if (!confirm("Restart Kernel?")) return;
     setExecStatus({});
     setConsoleOutput({});
-
-    // 2. Soft Reset Python Environment
+    // Soft Reset
     if (pyodide && isReady) {
        try {
            await pyodide.runPythonAsync(`
-            # Clear user variables but keep system modules
             for name in list(globals().keys()):
-                if not name.startswith("_") and name not in ['sys', 'js', 'input', 'io', 'pyodide']:
-                    del globals()[name]
+                if not name.startswith("_") and name not in ['sys', 'js', 'input', 'io', 'pyodide', 'numpy', 'pandas', 'matplotlib']:
+                   del globals()[name]
            `);
-           // Re-apply custom input hook just in case
-           await pyodide.runPythonAsync(CUSTOM_INPUT_CODE);
-       } catch (e) {
-           console.error("Soft reset failed:", e);
-       }
+           await pyodide.runPythonAsync(INPUT_OVERRIDE_CODE);
+       } catch (e) { console.error(e); }
     }
   };
 
@@ -212,13 +187,10 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
               submitted_at: new Date().toISOString()
           };
           if (isSubmitting) payload.status = 'submitted';
-
           const { error } = await supabase.from('user_assignment_progress').upsert(payload, { onConflict: 'user_id, assignment_id' });
           if (error) throw error;
-
           if (!silent) setSaveSuccess(true);
       } catch (err: any) {
-          console.error("Failed to save progress:", err);
           alert(`Failed to save: ${err.message}`);
       } finally {
           setIsSaving(false);
@@ -232,18 +204,19 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
 
   const handleRunCode = async (cellId: string) => {
      if (!pyodide || !isReady) return;
-
      setExecStatus(prev => ({ ...prev, [cellId]: 'running' }));
      setConsoleOutput(prev => ({ ...prev, [cellId]: 'Running...\n' }));
 
      const userCode = answers[cellId] || "";
      try {
-         await pyodide.runPythonAsync(CUSTOM_INPUT_CODE);
+         await pyodide.runPythonAsync(INPUT_OVERRIDE_CODE);
          let outputBuffer: string[] = [];
          pyodide.setStdout({ batched: (msg: string) => outputBuffer.push(msg) });
          await pyodide.runPythonAsync(userCode);
+
          setConsoleOutput(prev => ({ ...prev, [cellId]: outputBuffer.join('\n') }));
          setExecStatus(prev => ({ ...prev, [cellId]: 'success' }));
+         // Note: allTasksCompleted will auto-recalculate on next render due to execStatus change
      } catch (err: any) {
          setConsoleOutput(prev => ({ ...prev, [cellId]: `Runtime Error: ${err.message}` }));
          setExecStatus(prev => ({ ...prev, [cellId]: 'error' }));
@@ -254,7 +227,6 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
 
   return (
     <div className="space-y-6 relative min-h-screen pb-20">
-      {/* Header */}
       <header className="flex items-center justify-between border-b border-slate-200 pb-4 sticky top-0 bg-slate-50 z-10 pt-2 px-4 shadow-sm">
         <div className="flex items-center gap-4">
             <Button variant="ghost" onClick={onBack}><ChevronLeft className="mr-2 h-4 w-4" /> Back</Button>
@@ -265,34 +237,34 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
                </div>
                <div className={`flex items-center gap-2 text-xs mt-1 font-mono text-slate-500`}>
                    <Clock className="w-3 h-3" /> {formatTime(elapsedTime)}
+                   {requiredPkgs.length > 0 && <span className="ml-2 text-[10px] bg-orange-100 text-orange-800 px-1 rounded border border-orange-200">Pkg: {requiredPkgs.join(', ')}</span>}
                </div>
             </div>
         </div>
 
         <div className="flex items-center gap-2">
-            {/* Restart Button */}
             <Button size="sm" variant="ghost" onClick={handleRestart} title="Restart Kernel" className="text-slate-500 hover:text-red-600 hover:bg-red-50">
                 <RotateCcw className="w-4 h-4" />
             </Button>
-
             <Button size="sm" variant="outline" onClick={() => handleSave(false)} disabled={isSaving || user.role === 'guest'} className="text-slate-600 border-slate-300 hover:bg-slate-100">
-                {isSaving ? <Loader2 className="w-3 h-3 mr-2 animate-spin" /> : <Save className="w-3 h-3 mr-2" />}
-                Save
+                {isSaving ? <Loader2 className="w-3 h-3 mr-2 animate-spin" /> : <Save className="w-3 h-3 mr-2" />} Save
             </Button>
 
-            {!hasStarted ? (
-                <Button size="sm" onClick={handleStartTimer} className="bg-green-600 hover:bg-green-700 text-white">
-                    <Play className="w-3 h-3 mr-2" /> Start Timer
-                </Button>
-            ) : (
+            {/* [TARGET 3 FIX] Complete Button Logic */}
+            {/* If the timer has started OR valid work is done, show the Finish button options */}
+            {hasStarted || allTasksCompleted ? (
                 <Button
                     size="sm"
                     onClick={handleCompleteExercise}
+                    // Only disable if tasks aren't done (and not currently saving)
                     disabled={!allTasksCompleted || isSaving}
                     className={`${allTasksCompleted ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-300 cursor-not-allowed'} text-white transition-colors`}
-                    title={!allTasksCompleted ? "Complete all practice tasks (marked P) to finish" : "Finish and Exit"}
                 >
                     <CheckCircle className="w-3 h-3 mr-2" /> Complete
+                </Button>
+            ) : (
+                <Button size="sm" onClick={handleStartTimer} className="bg-green-600 hover:bg-green-700 text-white">
+                    <Play className="w-3 h-3 mr-2" /> Start Timer
                 </Button>
             )}
         </div>
@@ -307,9 +279,7 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
                 </div>
                 <h3 className="text-lg font-bold text-slate-900 mb-2">Successfully Saved!</h3>
                 <p className="text-sm text-slate-600 mb-6">Your progress and code have been securely stored.</p>
-                <Button fullWidth onClick={() => setSaveSuccess(false)}>
-                    Continue
-                </Button>
+                <Button fullWidth onClick={() => setSaveSuccess(false)}>Continue</Button>
             </div>
         </div>
       )}
@@ -318,7 +288,6 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
       <div className="max-w-4xl mx-auto space-y-8 px-4">
          {assignment.questions.map((cell, idx) => {
             const hasRun = execStatus[cell.id] === 'success' || execStatus[cell.id] === 'error';
-
             const isPractice = cell.id.startsWith('P') || /\[P\d+\]/.test(cell.content);
             const showReviewHeader = idx === 0 && !isPractice;
             const prevWasPractice = idx > 0 && (assignment.questions[idx-1].id.startsWith('P') || /\[P\d+\]/.test(assignment.questions[idx-1].content));
@@ -329,50 +298,37 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
                 {showReviewHeader && (
                     <div className="flex items-center gap-4 py-6 mt-2">
                          <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-lg">
-                             <BookOpen className="w-5 h-5" /> Lecture Review
+                              <BookOpen className="w-5 h-5" /> Lecture Review
                          </div>
                          <div className="h-px bg-slate-200 flex-1"></div>
                     </div>
-                )}
-
+                 )}
                 {showExerciseHeader && (
                     <div className="flex items-center gap-4 py-6 mt-8">
                          <div className="flex items-center gap-2 text-indigo-600 font-bold uppercase tracking-wider text-lg">
-                             <Dumbbell className="w-5 h-5" /> Exercise
+                              <Dumbbell className="w-5 h-5" /> Exercise
                          </div>
                          <div className="h-px bg-indigo-200 flex-1"></div>
                     </div>
                 )}
-
                 <div className={`flex gap-4 group transition-all rounded-xl p-4 ${isPractice ? 'bg-indigo-50/50 border border-indigo-100' : ''}`}>
                     <div className="w-8 flex-shrink-0 pt-2 text-right">
-                        <span className={`font-mono text-xs font-bold ${isPractice ? 'text-indigo-400' : 'text-slate-400'}`}>
-                            #{idx + 1}
-                        </span>
+                        <span className={`font-mono text-xs font-bold ${isPractice ? 'text-indigo-400' : 'text-slate-400'}`}>#{idx + 1}</span>
                     </div>
-
                     <div className="flex-1 min-w-0 space-y-4">
                         <div className={`bg-white p-5 rounded-xl border shadow-sm relative ${isPractice ? 'border-indigo-100' : 'border-slate-200'}`}>
-                                {isPractice && (
-                                    <div className="absolute top-0 right-0 px-2 py-1 bg-indigo-100 text-indigo-700 text-[10px] font-bold uppercase rounded-bl-lg rounded-tr-lg">
-                                        Practice Task
-                                    </div>
-                                )}
+                                {isPractice && <div className="absolute top-0 right-0 px-2 py-1 bg-indigo-100 text-indigo-700 text-[10px] font-bold uppercase rounded-bl-lg rounded-tr-lg">Practice Task</div>}
                                 <ManualMarkdown content={cell.content} />
                         </div>
-
                         {cell.type === 'code' && (
                             <div className={`rounded-xl border overflow-hidden bg-white shadow-sm transition-all focus-within:ring-2 ring-blue-500/20 ${execStatus[cell.id] === 'error' ? 'border-red-300' : execStatus[cell.id] === 'success' ? 'border-green-300' : 'border-slate-300'}`}>
                                 <div className="bg-slate-50 border-b px-3 py-2 flex justify-between items-center">
-                                    <span className="text-xs font-mono text-slate-500 flex items-center gap-2"><Terminal className="w-3 h-3"/> Python 3.10</span>
-                                    <button onClick={() => handleRunCode(cell.id)} disabled={!isReady} className="flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-colors">
-                                        <Play className="w-3 h-3"/> Run Code
-                                        </button>
+                                   <span className="text-xs font-mono text-slate-500 flex items-center gap-2"><Terminal className="w-3 h-3"/> Python 3.10</span>
+                                   <button onClick={() => handleRunCode(cell.id)} disabled={!isReady} className="flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-colors">
+                                      <Play className="w-3 h-3"/> Run Code
+                                   </button>
                                 </div>
-                                <SimpleCodeEditor
-                                    value={answers[cell.id] || ""}
-                                    onChange={(val) => setAnswers({...answers, [cell.id]: val})}
-                                />
+                                <SimpleCodeEditor value={answers[cell.id] || ""} onChange={(val) => setAnswers({...answers, [cell.id]: val})} />
                                 {(consoleOutput[cell.id]) && (
                                     <div className="border-t border-slate-700 bg-[#1e1e1e] p-3">
                                         <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Output</div>
@@ -381,20 +337,16 @@ export const ExercisePanel: React.FC<ExercisePanelProps> = ({ user, assignment, 
                                 )}
                             </div>
                         )}
-
                         <div className="mt-2">
                             <button
                                 onClick={() => hasRun && setVisibleSolutions(p => ({...p, [cell.id]: !p[cell.id]}))}
                                 disabled={!hasRun}
-                                className={`flex items-center gap-2 text-xs font-bold transition-colors ${
-                                    hasRun ? 'text-slate-400 hover:text-slate-600 cursor-pointer' : 'text-slate-300 cursor-not-allowed'
-                                }`}
+                                className={`flex items-center gap-2 text-xs font-bold transition-colors ${hasRun ? 'text-slate-400 hover:text-slate-600 cursor-pointer' : 'text-slate-300 cursor-not-allowed'}`}
                                 title={!hasRun ? "Run your code first to unlock the solution" : ""}
                             >
                                 {visibleSolutions[cell.id] ? <EyeOff className="w-3 h-3"/> : <Eye className="w-3 h-3"/>}
                                 {visibleSolutions[cell.id] ? "Hide Reference Solution" : "Show Reference Solution"}
                             </button>
-
                             {visibleSolutions[cell.id] && hasRun && (
                                 <div className="mt-2 p-4 bg-yellow-50 border border-yellow-100 rounded-lg animate-fade-in">
                                     <div className="text-[10px] font-bold text-yellow-700 uppercase mb-1 flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Official Solution</div>
