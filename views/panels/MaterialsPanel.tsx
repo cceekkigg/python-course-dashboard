@@ -319,7 +319,6 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ user }) => {
                         <img src={previewMaterial.url} alt="Preview" className="max-w-full max-h-full object-contain rounded shadow-lg" />
                     ) : null}
 
-                    // preview rendering
                     {previewMaterial.type === 'link' && !previewMaterial.title.match(/\.(jpeg|jpg|png|gif)$/i) && (
                         <div className="text-center p-10 bg-white rounded-xl shadow-sm">
                             <LinkIcon className="w-16 h-16 text-slate-200 mx-auto mb-4" />
