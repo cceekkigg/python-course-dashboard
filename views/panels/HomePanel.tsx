@@ -13,7 +13,7 @@ interface HomePanelProps {
 }
 
 export const HomePanel: React.FC<HomePanelProps> = ({ user, announcements }) => {
-  // [TARGET 2 FIX] Initialize attendance directly from user prop
+  // Initialize attendance directly from user prop
   const [stats, setStats] = useState({ score: 0, attendance: user.attendance || 0 });
 
   const [courseInfo, setCourseInfo] = useState({ name: '', endDate: '' });
@@ -46,7 +46,7 @@ export const HomePanel: React.FC<HomePanelProps> = ({ user, announcements }) => 
         .eq('user_id', user.id);
 
       if (data) {
-         // [TARGET 2 FIX] We only fetch score here, preserving the DB attendance value
+         // only fetch score here, preserving the DB attendance value
          const totalScore = data.filter(d => d.assignment_id.startsWith('hw-')).reduce((sum, curr) => sum + (curr.score || 0), 0);
 
          setStats(prev => ({
@@ -75,7 +75,7 @@ export const HomePanel: React.FC<HomePanelProps> = ({ user, announcements }) => 
           <div>
             <p className="text-sm font-medium text-slate-500">Attendance</p>
             {/* [TARGET 2 FIX] Displaying database value directly */}
-            <p className="text-2xl font-bold text-slate-900">{stats.attendance} / 15</p>
+            <p className="text-2xl font-bold text-slate-900">{stats.attendance} / 12</p>
           </div>
           <div className="h-10 w-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
             <Clock className="h-5 w-5" />
