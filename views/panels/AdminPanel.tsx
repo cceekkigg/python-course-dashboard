@@ -1,7 +1,5 @@
-// FILE PATH: views/panels/AdminPanel.tsx
-
 import React, { useState, useEffect } from 'react';
-import { StudentRecord, Announcement, AccessLog, CourseWeek, AssignmentContent, DeadlineItem } from '../../types';
+import { StudentRecord, Announcement, AccessLog, CourseWeek, AssignmentContent, DeadlineItem, Material } from '../../types';
 import Button from '../../components/Button';
 import Input from '../../components/Input';
 import { supabase } from '../../data/supabaseClient';
@@ -44,6 +42,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
   const [uploading, setUploading] = useState(false);
   const [selectedDay, setSelectedDay] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [materialMode, setMaterialMode] = useState<'file' | 'link'>('file');
+  const [linkTitle, setLinkTitle] = useState('');
+  const [linkUrl, setLinkUrl] = useState('');
 
   // Weeks & Assignments State
   const [adminWeeks, setAdminWeeks] = useState<CourseWeek[]>([]);
@@ -59,11 +60,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
     const { data } = await supabase.from('access_logs').select('*').order('login_time', { ascending: false }).limit(50);
     if (data) setLogs(data as AccessLog[]);
   };
-
-  // Material Link State
-  const [materialMode, setMaterialMode] = useState<'file' | 'link'>('file');
-  const [linkTitle, setLinkTitle] = useState('');
-  const [linkUrl, setLinkUrl] = useState('');
 
   const fetchWeeks = async () => {
       const { data } = await supabase.from('weeks').select('*, days(*)').order('week_number', { ascending: true });
@@ -93,7 +89,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
         const loadDeadlines = async () => {
             const { data } = await supabase.from('app_settings').select('value').eq('key', 'next_deadlines').maybeSingle();
             if (data?.value) {
-                try { setDeadlines(JSON.parse(data.value)); } catch(e) {}
+                try { setDeadlines(JSON.parse(data.value));
+                } catch(e) {}
             }
         };
         loadDeadlines();
@@ -168,7 +165,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
       const updated = [...deadlines, newItem];
       setDeadlines(updated);
       await saveDeadlinesToDB(updated);
-      setNewDlDate(''); setNewDlTask(''); setNewDlSub('');
+      setNewDlDate('');
+      setNewDlTask(''); setNewDlSub('');
   };
 
   const removeDeadline = async (index: number) => {
@@ -181,14 +179,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
       await supabase.from('app_settings').upsert({ key: 'next_deadlines', value: JSON.stringify(items) });
   };
 
-  // --- ATTENDANCE HANDLERS ---
-  const handleAttendanceChange = (studentId: string, value: string) => {
+  // --- ATTENDANCE & SCORES HANDLERS (UPDATED) ---
+  const handleScoreChange = (studentId: string, type: 'attendance' | 'hw', value: string, key?: string) => {
       const numValue = parseInt(value) || 0;
-      onUpdateStudents(students.map(s => s.id === studentId ? { ...s, attendance: numValue } : s));
+
+      const updatedList = students.map(s => {
+          if (s.id !== studentId) return s;
+          if (type === 'attendance') {
+              return { ...s, attendance: numValue };
+          }
+          if (type === 'hw' && key) {
+              const currentScores = s.assignmentScores || {};
+              return {
+                  ...s,
+                  assignmentScores: {
+                      ...currentScores,
+                      [key]: numValue
+                  }
+              };
+          }
+          return s;
+      });
+
+      onUpdateStudents(updatedList);
       setPendingSaves(prev => new Set(prev).add(studentId));
   };
 
-  const saveAttendance = async () => {
+  const saveChanges = async () => {
       if (pendingSaves.size === 0) return;
       setIsSavingScores(true);
       try {
@@ -196,24 +213,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
               const s = students.find(u => u.id === id);
               if (!s) return;
 
-              // .select() is crucial to confirm the row was actually updated
+              // Upsert both attendance and the full jsonb assignmentScores
               const { data, error } = await supabase
                   .from('users')
-                  .update({ attendance: s.attendance })
+                  .update({
+                      attendance: s.attendance,
+                      assignmentScores: s.assignmentScores
+                  })
                   .eq('id', id)
                   .select();
 
               if (error) throw error;
-
-              // If data is empty, the database blocked the update (RLS)
-              if (!data || data.length === 0) {
-                  throw new Error(`Permission denied for user ${s.name} (RLS Blocked)`);
-              }
+              if (!data || data.length === 0) throw new Error(`Permission denied for user ${s.name} (RLS Blocked)`);
           });
-
           await Promise.all(updates);
           setPendingSaves(new Set());
-          alert("✅ Attendance records updated successfully!");
+          alert("✅ Records updated successfully!");
 
       } catch (e: any) {
           console.error("Save failed:", e);
@@ -223,6 +238,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
       }
   };
 
+  // --- MATERIAL & CONTENT HANDLERS ---
   const handleFileUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file || !selectedDay) return;
@@ -236,27 +252,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
 
       const week = adminWeeks.find(w => w.days.some(d => d.id === selectedDay));
       const dayObj = week?.days.find(d => d.id === selectedDay);
-      const dayIndex = dayObj ? dayObj.day_index : -233;
-
+      const dayIndex = dayObj ? dayObj.day_index : -99;
       let type: Material['type'] = 'link';
       if (fileExt === 'pdf') type = 'pdf';
       else if (['csv', 'xlsx'].includes(fileExt || '')) type = 'csv';
       else if (['ppt', 'pptx'].includes(fileExt || '')) type = 'slides';
-
       const { error: dbError } = await supabase.from('materials').insert({
-        title: file.name,
-        type: type,
-        url: publicUrl,
-        week_id: week?.id,
-        day_id: selectedDay,
-        day_index: dayIndex
+        title: file.name, type: type, url: publicUrl, week_id: week?.id, day_id: selectedDay, day_index: dayIndex
       });
-
       if (dbError) throw dbError;
       alert("✅ File uploaded successfully!");
       setFile(null);
     } catch (error: any) {
-      console.error(error);
       alert("Error uploading: " + error.message);
     } finally {
       setUploading(false);
@@ -266,28 +273,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
   const handleLinkUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!linkTitle || !linkUrl || !selectedDay) return;
-
-    // Find the correct day_index for sorting
     const week = adminWeeks.find(w => w.days.some(d => d.id === selectedDay));
     const dayObj = week?.days.find(d => d.id === selectedDay);
     const dayIndex = dayObj ? dayObj.day_index : 0;
-
     try {
         setUploading(true);
         const { error } = await supabase.from('materials').insert({
-            title: linkTitle,
-            type: 'link', // Explicitly set type to 'link'
-            url: linkUrl,
-            week_id: week?.id,
-            day_id: selectedDay,
-            day_index: dayIndex
+            title: linkTitle, type: 'link', url: linkUrl, week_id: week?.id, day_id: selectedDay, day_index: dayIndex
         });
-
         if (error) throw error;
-
         alert("✅ Link added successfully!");
-        setLinkTitle('');
-        setLinkUrl('');
+        setLinkTitle(''); setLinkUrl('');
     } catch (error: any) {
         alert("Error adding link: " + error.message);
     } finally {
@@ -327,7 +323,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
               { id: 'visitors', icon: Globe, label: 'Visitor Logs' }
           ]
           .map(tab => (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id as AdminTab)} className={`flex items-center px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
+              <button key={tab.id} onClick={() => setActiveTab(tab.id as AdminTab)} className={`flex items-center px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id ?
+                'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
                   <tab.icon className="w-4 h-4 mr-2" /> {tab.label}
               </button>
           ))}
@@ -355,13 +352,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
           </div>
         )}
 
-        {/* 2. SCORES TAB (Updated for Manual HW Grading) */}
+        {/* 2. SCORES TAB (Updated for Attendance + Final Project Editing) */}
         {activeTab === 'scores' && (
           <div className="space-y-4">
                <div className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-200">
                  <div className="text-sm text-slate-600 flex items-center gap-2">
                      <AlertTriangle className="w-4 h-4 text-slate-400" />
-                     <span><strong>Note:</strong> HW 10 (Final) and Attendance are editable. Save changes after editing.</span>
+                     <span><strong>Note:</strong> Attendance and Final Project (FP) scores are editable.</span>
                  </div>
                  {pendingSaves.size > 0 && (
                      <Button size="sm" onClick={saveChanges} disabled={isSavingScores} className="bg-blue-600 hover:bg-blue-700 text-white">
@@ -377,24 +374,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
                           <tr>
                               <th className="px-4 py-3 text-left font-bold text-slate-700 sticky left-0 bg-slate-50 z-10 shadow-sm">Student</th>
                               <th className="px-2 py-3 text-center font-bold text-blue-700 bg-blue-50 border-x border-blue-100 w-24">Attd (15)</th>
+
+                              {/* Read Only HW 1-10 Headers */}
                               {homeworkIds.map((id, i) => (
-                                  <th key={id} className={`px-2 py-3 text-center font-bold min-w-[60px] ${id === 'hw-10' ? 'text-purple-700 bg-purple-50' : 'text-slate-500'}`}>
-                                      {id === 'hw-10' ? 'Final (M)' : `HW ${i+1}`}
+                                  <th key={id} className="px-2 py-3 text-center font-bold min-w-[50px] text-slate-500">
+                                      HW {i+1}
                                   </th>
                               ))}
+
+                              {/* [NEW] Final Project Header */}
+                              <th className="px-2 py-3 text-center font-bold min-w-[80px] text-purple-700 bg-purple-50 border-x border-purple-100">
+                                  FP (100)
+                              </th>
+
                               <th className="px-4 py-3 text-center font-bold text-slate-900 bg-slate-100">Total</th>
                           </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200">
                           {filteredUsers.filter(u => u.role === 'student').map(student => {
                               const attendanceCount = student.attendance || 0;
+
+                              // Calculate total score: Sum(HW1-10) + FP
                               const hwSum = homeworkIds.reduce((sum, id) => sum + (student.assignmentScores?.[id] || 0), 0);
+                              const fpScore = student.assignmentScores?.['hw-fp'] || 0;
+                              const totalScore = hwSum + fpScore;
+
                               const isDirty = pendingSaves.has(student.id);
                               return (
                                   <tr key={student.id} className="hover:bg-slate-50">
                                       <td className="px-4 py-3 font-medium text-slate-900 sticky left-0 bg-white z-10 border-r border-slate-100">{student.name}</td>
 
-                                      {/* Attendance Input */}
+                                      {/* Attendance Input (Editable) */}
                                       <td className={`px-2 py-3 text-center bg-blue-50/30 ${isDirty ? 'bg-yellow-50' : ''}`}>
                                           <input
                                               type="number" max="15" min="0"
@@ -404,24 +414,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
                                           />
                                       </td>
 
-                                      {/* Homework Columns */}
+                                      {/* HW Columns (Read Only from DB) */}
                                       {homeworkIds.map(hwId => (
-                                          <td key={hwId} className={`px-2 py-3 text-center border-r border-slate-100 font-mono text-slate-600 ${hwId === 'hw-10' ? 'bg-purple-50/20' : ''}`}>
-                                              {hwId === 'hw-10' ? (
-                                                  /* Manual Input for HW 10 */
-                                                  <input
-                                                      type="number" min="0" max="100"
-                                                      className={`w-12 text-center border rounded font-bold focus:outline-none focus:border-purple-500 py-1 text-xs ${isDirty ? 'border-yellow-400 bg-yellow-50' : 'border-slate-200'}`}
-                                                      value={student.assignmentScores?.[hwId] || 0}
-                                                      onChange={(e) => handleScoreChange(student.id, 'hw', e.target.value, hwId)}
-                                                  />
-                                              ) : (
-                                                  /* Read-only for standard HW */
-                                                  student.assignmentScores?.[hwId] || 0
-                                              )}
+                                          <td key={hwId} className="px-2 py-3 text-center border-r border-slate-100 font-mono text-slate-400">
+                                              {student.assignmentScores?.[hwId] || 0}
                                           </td>
                                       ))}
-                                      <td className="px-4 py-3 text-center font-black text-slate-900 bg-slate-50 border-l border-slate-200">{hwSum}</td>
+
+                                      {/* [NEW] Final Project Input (Editable) */}
+                                      <td className={`px-2 py-3 text-center bg-purple-50/30 border-x border-purple-100 ${isDirty ? 'bg-yellow-50' : ''}`}>
+                                          <input
+                                              type="number" min="0" max="100"
+                                              className={`w-14 text-center border rounded font-bold focus:outline-none focus:border-purple-500 py-1 text-xs ${isDirty ? 'border-yellow-400 bg-yellow-50' : 'border-purple-200 text-purple-800'}`}
+                                              value={fpScore}
+                                              onChange={(e) => handleScoreChange(student.id, 'hw', e.target.value, 'hw-fp')}
+                                              placeholder="0"
+                                          />
+                                      </td>
+
+                                      <td className="px-4 py-3 text-center font-black text-slate-900 bg-slate-50 border-l border-slate-200">{totalScore}</td>
                                   </tr>
                               );
                           })}
@@ -439,11 +450,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
           </div>
         )}
 
-        {/* 4. MATERIALS UPLOAD TAB (Updated for Links) */}
+        {/* 4. MATERIALS UPLOAD TAB */}
         {activeTab === 'materials' && (
           <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm max-w-lg">
               <h3 className="font-bold mb-4 flex items-center gap-2"><Upload className="w-5 h-5 text-blue-600" /> Add Course Material</h3>
-
               {/* Mode Toggle */}
               <div className="flex p-1 bg-slate-100 rounded-lg mb-4">
                   <button onClick={() => setMaterialMode('file')} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${materialMode === 'file' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>File Upload</button>
@@ -468,13 +478,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ students, onUpdateStuden
                               </label>
                           </div>
                       </div>
-                  ) : (
+                   ) : (
                       <>
                           <Input label="Link Title" placeholder="e.g. Weekly Survey" value={linkTitle} onChange={e => setLinkTitle(e.target.value)} required />
                           <Input label="URL" placeholder="https://" value={linkUrl} onChange={e => setLinkUrl(e.target.value)} icon={<LinkIcon className="w-4 h-4"/>} required />
                       </>
                   )}
-
                   <Button type="submit" fullWidth disabled={uploading || (materialMode === 'file' ? !file : !linkUrl)}>
                       {uploading ? 'Processing...' : (materialMode === 'file' ? 'Upload & Save' : 'Add Link')}
                   </Button>
